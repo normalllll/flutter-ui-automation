@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.14)
+project(window_capture LANGUAGES CXX)
+add_executable(window_capture capture.cpp)
+target_compile_features(window_capture PRIVATE cxx_std_20)
+target_compile_definitions(window_capture PRIVATE UNICODE _UNICODE NOMINMAX)
+target_compile_options(window_capture PRIVATE /W4 /EHsc)
+target_link_libraries(window_capture PRIVATE d3d11 dxgi windowsapp windowscodecs ole32 user32 gdi32 dwmapi)
+if(DEFINED BINARY_NAME)
+  set_target_properties(window_capture PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+    "${CMAKE_BINARY_DIR}/runner")
+endif()

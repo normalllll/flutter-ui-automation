@@ -1,0 +1,6 @@
+interface:
+  display_name: "Flutter UI Automation"
+  short_description: "Verify Windows and Android Flutter UI without desktop input"
+  default_prompt: "Use $flutter-ui-automation to verify Flutter page interactions and screenshots without taking over my mouse, keyboard, or foreground window."
+policy:
+  allow_implicit_invocation: true

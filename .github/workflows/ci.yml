@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Windows Python ${{ matrix.python }}
+    runs-on: windows-2022
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Prepare FFmpeg
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          ffmpeg -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ffprobe -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check repository and documentation
+        run: python -B scripts/check_repository.py
+      - name: Run contracts and media tests (no app or device)
+        run: python -B -m unittest discover -s scripts -p "test_*.py" -v
+
+  flutter:
+    name: Flutter analysis and headless tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Get reference Flutter SDK (3.47.6)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: 3.47.6
+          path: .cache/flutter
+          persist-credentials: false
+      - name: Prepare SDK
+        run: |
+          test "$(git -C .cache/flutter rev-parse HEAD)" = "5fc346839b5d0eef006ed8404392afb4dfae428d"
+          echo "$GITHUB_WORKSPACE/.cache/flutter/bin" >> "$GITHUB_PATH"
+          .cache/flutter/bin/flutter --version
+      - name: Resolve fixture dependencies
+        working-directory: examples/capture_lab
+        run: flutter pub get
+      - name: Analyze fixture
+        working-directory: examples/capture_lab
+        run: flutter analyze --no-pub
+      - name: Test fixture (headless)
+        working-directory: examples/capture_lab
+        run: flutter test --no-pub
+
+  native:
+    name: Compile Windows capture helper
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure standalone helper
+        run: cmake -S tools/window_capture -B tools/window_capture/build -A x64
+      - name: Compile (no capture execution)
+        run: cmake --build tools/window_capture/build --config Release
