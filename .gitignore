@@ -1,0 +1,19 @@
+# Local runtimes and verification artifacts
+/artifacts/
+/.cache/
+/.venv/
+**/build/
+**/.dart_tool/
+**/.idea/
+**/.flutter-plugins-dependencies
+**/windows/flutter/ephemeral/
+**/__pycache__/
+*.pyc
+*.iml
+*.log
+*.lock
+.DS_Store
+**/android/.gradle/
+**/android/.kotlin/
+**/android/local.properties
+**/android/captures/

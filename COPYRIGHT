@@ -1,0 +1,13 @@
+Copyright (C) 2026 normalllll
+
+Original work in Flutter UI Automation is licensed under the GNU General Public
+License, version 3 or (at your option) any later version.
+SPDX-License-Identifier: GPL-3.0-or-later
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See LICENSE for the full GNU General Public License.
+
+Bundled Flutter-derived project scaffolding retains its upstream BSD license;
+see THIRD_PARTY_NOTICES.md. External SDKs, tools and dependencies retain their
+respective licenses and are not relicensed by this notice.
