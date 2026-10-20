@@ -58,19 +58,25 @@ class WindowCaptureTests(unittest.TestCase):
         probe = {'token': 1, 'pixelRatio': 1.5,
                  'rect': {'x': 10, 'y': 20, 'width': 128, 'height': 8}}
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory)/'window.png'
-            with patch('window_capture.validate_target'):
-                with patch('window_capture.subprocess.run') as run:
-                    run.return_value.returncode = 1
-                    run.return_value.stderr = json.dumps(details)
-                    with self.assertRaises(CaptureError) as raised:
-                        capture_png(output, hwnd=1, process_id=2, probe=probe)
-                    self.assertEqual(raised.exception.diagnostics, details)
-                    self.assertFalse(output.exists())
-                    args = run.call_args.args[0]
-                    self.assertIn('--probe', args)
-                    self.assertIn('--diagnostic-png', args)
-                    self.assertIn(str(output.with_name('window.failed-native.png')), args)
+            root = Path(directory)
+            child = root/'child'
+            child.mkdir()
+            # Always exercise normalization, even on hosts without 8.3 aliases.
+            for output in (root/'window.png', child/'..'/'window.png'):
+                with self.subTest(output=str(output)), patch('window_capture.validate_target'):
+                    with patch('window_capture.subprocess.run') as run:
+                        run.return_value.returncode = 1
+                        run.return_value.stderr = json.dumps(details)
+                        with self.assertRaises(CaptureError) as raised:
+                            capture_png(output, hwnd=1, process_id=2, probe=probe)
+                        self.assertEqual(raised.exception.diagnostics, details)
+                        self.assertFalse(output.exists())
+                        args = run.call_args.args[0]
+                        self.assertIn('--probe', args)
+                        self.assertIn('--diagnostic-png', args)
+                        diagnostic = Path(args[args.index('--diagnostic-png') + 1])
+                        expected = output.with_name('window.failed-native.png')
+                        self.assertEqual(diagnostic.resolve(), expected.resolve())
 
     def test_recording_retains_structured_start_failure_before_encoding(self):
         details = {'error': 'capture_not_presented', 'message': 'Not presented',

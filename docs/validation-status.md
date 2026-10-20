@@ -15,7 +15,13 @@ The repository preparation on 2026-10-20 does not rerun GUI/device acceptance.
 | Windows cold launches | 2026-10-19: three launches, 12 page capture pairs, stale-token rejection and never-presented timeout passed | Historical scoped placement and presentation checks |
 | Android runtime / visual review | 2026-10-19: 28 assertions across all four required groups plus sampled visual inspection | Pixel_10_Pro_XL emulator, Android 17/API 37, SwiftShader, default Flutter Impeller OpenGLES; no physical phone coverage |
 | Android latest corrections | Unit-covered changes on 2026-10-20 | Output cleanup and capture-failure isolation have **not** been rerun on a device |
-| GitHub Actions | Workflow added for repository, unit, Flutter headless and native compilation checks | Remote execution status is unknown until the workflow runs after a push |
+| GitHub Actions | [Initial run](https://github.com/normalllll/flutter-ui-automation/actions/runs/39452515810/) passed Flutter analysis/headless tests and Windows native helper compilation | Both Windows Python jobs failed one raw-path string assertion; the local correction compares canonical paths and adds a normalization subcase. A remote run of the correction is pending |
+
+The CI path-assertion correction passed all 33 tests locally on Windows with
+Python 3.12.14. The affected test also passed with a real Windows 8.3 directory
+alias. Its regular subcases include a redundant parent segment so normalization
+is exercised even on filesystems that do not provide short names. The original
+assertion was reproduced failing before the correction.
 
 The Android content recording retained 10 original 1344×2992 PNGs, sampled at
 2 fps, with a 5.000 s encoded duration and 5.011 s capture wall time. All ten
