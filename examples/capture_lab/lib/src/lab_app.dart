@@ -158,6 +158,8 @@ class CaptureLabState extends State<CaptureLab>
       'pretendForeground': _automation?.pretendForeground ?? false,
       'frameworkFocusAllowed': FocusManager.instance.rootScope.canRequestFocus,
       'rawLifecycle': _automation?.rawLifecycle?.name,
+      'rawViewFocus':
+          _automation?.rawViewFocus[View.of(context).viewId]?.state.name,
       'effectiveLifecycle': WidgetsBinding.instance.lifecycleState?.name,
       'effectiveViewFocus': _viewFocus.name,
       'native': _os,

@@ -62,4 +62,27 @@ void main() {
     );
     expect(FocusManager.instance.rootScope.canRequestFocus, isFalse);
   });
+
+  test(
+    'disabling simulation preserves user activation received while enabled',
+    () {
+      final id = binding.platformDispatcher.views.first.viewId;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      binding.setPretendForeground(true);
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      binding.handleViewFocusChanged(
+        ui.ViewFocusEvent(
+          viewId: id,
+          state: ui.ViewFocusState.focused,
+          direction: ui.ViewFocusDirection.undefined,
+        ),
+      );
+      binding.setPretendForeground(false);
+      expect(binding.pretendForeground, isFalse);
+      expect(binding.lifecycleState, AppLifecycleState.resumed);
+      expect(binding.rawLifecycle, AppLifecycleState.resumed);
+      expect(binding.rawViewFocus[id]!.state, ui.ViewFocusState.focused);
+      expect(FocusManager.instance.rootScope.canRequestFocus, isTrue);
+    },
+  );
 }

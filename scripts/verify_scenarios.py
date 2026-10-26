@@ -10,6 +10,7 @@ import time
 
 import windows_platform as lab
 from window_capture import capture_png, probe_arguments
+from windows_evidence import ForegroundEvidence
 
 
 def pixels(path, filters):
@@ -82,6 +83,8 @@ class AppRecorder:
 
 
 def verify_scenarios(output, check, shots, state, native_step):
+    evidence = {}
+    foreground = ForegroundEvidence(evidence)
     lab.drive('tap', 'nav-scenarios')
     baseline = state('scenarios-baseline')
     shots('scenarios-idle')
@@ -119,7 +122,7 @@ def verify_scenarios(output, check, shots, state, native_step):
         app_ready = app.start()
         time.sleep(1.1)
         moving = state('animation-playing')
-        check('real animation receives ticker frames in background',
+        check('real animation receives ticker frames',
               moving['animationRunning'] and moving['animationFrames'] > playing['animationFrames'] + 10)
         paused = lab.drive('tap', 'animation-pause')
         # Both videos have a moving segment followed by a stable segment.
@@ -149,12 +152,13 @@ def verify_scenarios(output, check, shots, state, native_step):
     check('app animation wall-clock pacing matches its timeline', lab.timing_ok(app_notes, 8000, 40),
           {key: app_notes.get(key) for key in ('elapsedMs', 'lateFrames', 'maxLagMs')})
     if native_notes is not None:
-        check('animation window recording never foreground', native_notes['foregroundSamples'] == 0, group='native')
+        foreground.recording('animation-window', native_notes)
         check('window animation master preserves original pixels', native_notes['losslessVerified'], group='native')
         check('window animation wall-clock pacing matches its timeline', lab.timing_ok(native_notes, 8000, 96),
               {key: native_notes.get(key) for key in ('elapsedMs', 'lateFrames', 'maxLagMs')}, group='native')
     rect = moving['animationRect']
-    results = {'window': native_notes, 'app': app_notes, 'ready': {'window': native_ready, 'app': app_ready}}
+    results = {'window': native_notes, 'app': app_notes,
+               'ready': {'window': native_ready, 'app': app_ready}, **evidence}
     for source in ('app', 'window') if native_notes is not None else ('app',):
         group = 'functional' if source == 'app' else 'native'
         scale = native.probe['pixelRatio']
@@ -182,9 +186,8 @@ def verify_scenarios(output, check, shots, state, native_step):
     shots('animation-paused')
     reset = lab.drive('tap', 'animation-reset')
     check('animation reset returns to start', not reset['animationRunning'] and reset['animationValue'] == 0)
-    check('dialog and animation cause no native focus or activation',
-          reset['native']['activationCount'] == baseline['native']['activationCount'] == 0
-          and not reset['native']['hasNativeFocus'] and not reset['native']['isForeground'])
+    foreground.state('scenarios-baseline', baseline)
+    foreground.state('scenarios-reset', reset)
     return results
 
 
@@ -194,13 +197,15 @@ def verify_cold(cycles=3):
     output = lab.ARTIFACTS / time.strftime('cold-%Y%m%d-%H%M%S')
     output.mkdir(parents=True)
     report = {'cycles': [], 'passed': False}
+    foreground = ForegroundEvidence(report)
     try:
         for cycle in range(cycles):
             lab.stop()
             placement = ('auto', 'primary', 'secondary')[cycle % 3]
             os.environ['CAPTURE_LAB_PLACEMENT'] = placement
             initial = lab.start()
-            assert initial['native']['isBelowForeground'] and not initial['native']['topmost']
+            foreground.state(f'cold-{cycle}-initial', initial)
+            assert not initial['native']['topmost']
             bounds, work = initial['native']['windowBounds'], initial['native']['monitorWorkArea']
             assert bounds['left'] >= work['left'] and bounds['top'] >= work['top']
             assert bounds['right'] <= work['right'] and bounds['bottom'] <= work['bottom']
@@ -220,8 +225,7 @@ def verify_cold(cycles=3):
                 result['captures'].append(item)
                 assert current['page'] == page and window['probeMatched']
                 assert metrics['meanPixelDifference'] < 3.5 and metrics['windowContentStdDev'] > 8, item
-                assert current['native']['activationCount'] == 0 and not current['native']['hasNativeFocus']
-                assert not current['native']['isForeground']
+                foreground.state(f'cold-{cycle}-{page}', current)
                 print(f'PASS cold {cycle+1}/{cycles}: {page}, pixel difference {metrics["meanPixelDifference"]:.3f}', flush=True)
             # Deliberately request a token not yet rendered. API success with an
             # old valid frame must not complete the capture. Release the fence by

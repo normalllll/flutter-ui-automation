@@ -6,12 +6,14 @@ import subprocess
 import time
 import traceback
 import windows_platform as lab
+from windows_evidence import ForegroundEvidence, finish_report
 
 def verify():
     lab.start()
     output = lab.ARTIFACTS / time.strftime("run-%Y%m%d-%H%M%S")
     output.mkdir()
     report = {"output": str(output), "renderer": lab.session().get("renderer", "default"), "checks": [], "snapshots": {}, "captures": {}}
+    foreground = ForegroundEvidence(report)
 
     def check(name, passed, detail=None, *, group="functional"):
         # Functional failures stop the run; native capture failures are recorded
@@ -33,6 +35,7 @@ def verify():
     def state(label):
         current = lab.drive("state")
         report["snapshots"][label] = current
+        foreground.state(label, current)
         return current
 
     def shots(label):
@@ -67,24 +70,23 @@ def verify():
         lab.drive("foreground", "off")
         lab.drive("tap", "nav-overview")
         before = state("background-mode-off")
-        check("visible background HWND", before["native"]["visible"] and not before["native"]["isForeground"], before["native"])
+        check("visible HWND", before["native"]["visible"], before["native"])
         native = before['native']
         bounds, work = native['windowBounds'], native['monitorWorkArea']
-        check('initial window is below foreground and not topmost', native['isBelowForeground'] and not native['topmost'])
+        check('window is not topmost', not native['topmost'])
         check('initial window fits selected monitor work area', bounds['left'] >= work['left']
               and bounds['top'] >= work['top'] and bounds['right'] <= work['right']
               and bounds['bottom'] <= work['bottom'])
         time.sleep(1.2)
         idle = state("background-idle")
-        check("foreground-only activity stops with simulation off", idle["foregroundTicks"] == before["foregroundTicks"])
+        foreground.background_activity("foreground-only activity stops with simulation off", before, idle, check)
         lab.drive("tap", "foreground-switch")
         enabled = state("simulation-on")
         check("switch enables simulation", enabled["pretendForeground"])
         check("framework sees resumed and focused", enabled["effectiveLifecycle"] == "resumed" and enabled["effectiveViewFocus"] == "focused")
-        check("Windows still sees background", not enabled["native"]["isForeground"] and not enabled["native"]["hasNativeFocus"])
         time.sleep(1.2)
         active = state("simulated-activity")
-        check("foreground-only activity advances in background", active["foregroundTicks"] > enabled["foregroundTicks"] + 5)
+        check("foreground-only activity advances with simulation", active["foregroundTicks"] > enabled["foregroundTicks"] + 5)
         shots("overview")
         lab.drive("tap", "nav-gallery")
         lab.drive("tap", "tile-0")
@@ -157,7 +159,7 @@ def verify():
         recorder = None
         if report.get("recording"):
             recording = report["recording"]
-            check("recording stays in background", recording["foregroundSamples"] == 0, group="native")
+            foreground.recording('window-recording', recording)
             check('native recording master preserves original pixels', recording['losslessVerified'], group="native")
             check("capture backend supplied fresh frames", recording["freshFrames"] >= 4, recording, group="native")
             check("native recording wall-clock pacing matches its timeline", lab.timing_ok(recording, 12000, 144),
@@ -182,11 +184,10 @@ def verify():
         lab.drive("tap", "nav-overview")
         lab.drive("tap", "foreground-switch")
         restored = state("simulation-off-restored")
-        check("switch restores actual framework state", not restored["pretendForeground"] and restored["effectiveLifecycle"] == restored["rawLifecycle"] and restored["effectiveViewFocus"] == "unfocused")
+        foreground.restoration(restored, check)
         time.sleep(1)
         final = state("final")
-        check("foreground-only activity stops again", final["foregroundTicks"] == restored["foregroundTicks"])
-        check("no native activation during run", final["native"]["activationCount"] == before["native"]["activationCount"] == 0)
+        foreground.background_activity("foreground-only activity stops again", restored, final, check)
         shots("restored")
     except Exception as caught:
         error = caught
@@ -199,13 +200,7 @@ def verify():
             except Exception as cleanup: report["recordingCleanupError"] = str(cleanup)
         try: lab.drive("foreground", "off")
         except Exception as restore: report["restoreError"] = str(restore)
-        checks = report["checks"]
-        report['functionalPassed'] = error is None and all(
-            c['passed'] for c in checks if c['group'] == 'functional')
-        # An interrupted run has not established native capture either.
-        report['nativeCapturePassed'] = error is None and any(c['group'] == 'native' for c in checks) and all(
-            c['passed'] for c in checks if c['group'] == 'native')
-        report['passed'] = report['functionalPassed'] and report['nativeCapturePassed']
+        finish_report(report, error)
         (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps({"passed": report['passed'], "functionalPassed": report['functionalPassed'],
                           "nativeCapturePassed": report['nativeCapturePassed'],

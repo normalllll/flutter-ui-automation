@@ -14,6 +14,12 @@ foreground observations and last platform events; simulated foreground status
 must remain explicit and reversible. Do not commit generated build artifacts,
 recordings, transient session URLs or lock files.
 
+Background operation is a non-interference constraint on automation, not a ban
+on user inspection. Windows foreground/focus changes and activation counts are
+observations, not automatic capture failures or evidence of who activated the
+window. Keep them in reports. When a background-only check loses its required
+conditions, report it as not assessed without invalidating unrelated captures.
+
 Android sessions require an explicit device ID and fixture instance identity.
 Preserve real mobile lifecycle/focus and leave Windows simulation in its adapter.
 Keep app content and system capture evidence separate, and do not label Android
