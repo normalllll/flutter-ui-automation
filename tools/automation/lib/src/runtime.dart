@@ -561,11 +561,18 @@ class AutomationRuntime {
           'text': args.text('text'),
         });
       case 'textEmulation':
-        session.textEmulation = args.flag('enabled');
+        final enabled = args.flag('enabled');
+        // A dispatched enable may take effect even when its reply is lost.
+        // Persist cleanup responsibility until disabling is acknowledged.
+        if (enabled) {
+          session.textEmulation = true;
+          await session.save();
+        }
         result = await connection.driver({
           'command': 'set_text_entry_emulation',
-          'enabled': '${session.textEmulation}',
+          'enabled': '$enabled',
         });
+        session.textEmulation = enabled;
       case 'foreground':
         if (session.platform != TargetPlatform.windows) {
           throw const AutomationError(
@@ -573,10 +580,15 @@ class AutomationRuntime {
             'Simulated foreground applies only to Windows',
           );
         }
-        session.simulated = args.flag('enabled');
+        final enabled = args.flag('enabled');
+        if (enabled) {
+          session.simulated = true;
+          await session.save();
+        }
         result = await connection.hook('pretendForeground', {
-          'enabled': session.simulated,
+          'enabled': enabled,
         });
+        session.simulated = enabled;
       case 'orientation':
         if (session.platform != TargetPlatform.android) {
           throw const AutomationError(
@@ -591,8 +603,12 @@ class AutomationRuntime {
             'Use portrait, landscape or restore',
           );
         }
-        session.orientationChanged = value != 'restore';
+        if (value != 'restore') {
+          session.orientationChanged = true;
+          await session.save();
+        }
         result = await connection.hook('orientation', {'value': value});
+        session.orientationChanged = value != 'restore';
         if (value != 'restore') {
           await until(session.state, (s) {
             final v = s.child('view');

@@ -8,17 +8,59 @@ service tokens and device identifiers remain in ignored local artifacts.
 
 | Check | Result | Scope |
 | --- | --- | --- |
-| Resident Dart MCP | Analysis clean; 35 tests passed on Windows | Protocol, cancellation, evidence isolation, readiness, lease ownership, attach conflicts and independent keyboard-group setup |
+| Resident Dart MCP | 69 tests passed on Windows | Protocol, cancellation, evidence isolation, readiness, session/lease identity, device/panel capture, real FFmpeg fidelity/timing and interrupted acceptance |
 | Compiled distribution | Passed without inherited `DART_ROOT` / `DART_SDK` | MCP initialization, merged tools, native-fps validation, compiled CLI reuse, EOF cleanup |
 | Broker lifetime | Passed | Authentication, shared service PID, duplicate rejection, shutdown and recovery after a forced service-only crash |
-| Python regression tools | 46 tests passed on Windows | Session/capture contracts, display-panel selection, foreground evidence and small real FFmpeg encodes; no app/device launch |
+| Independent Python capture | 11 tests passed on Windows | HWND/PID scope, diagnostic retention, atomic publication and helper cleanup; no Flutter/Android runtime remains |
 | Flutter fixture | Analysis clean; 10 headless tests passed | Binding restoration, focus guard, layout, dialogs and widget behavior |
 | Repository | Source/metadata/document links and `git diff --check` passed | Excludes ignored build, media, session and lock files from published source |
 | CI configuration | YAML parsed; Linux/Windows matrix and compiled startup check configured | Remote execution of the current change is pending |
 
-The runtime checks used Flutter 3.47.8 / Dart 3.13.7. CI pins Flutter 3.47.6 /
-Dart 3.13.5 and now exercises the compiled startup check and Windows-only lease
-tests. These local results do not claim that the new remote jobs have run.
+Local runtime measurements used Flutter 3.47.8 / Dart 3.13.7. Minimum supported
+toolchains are Flutter 3.44.0 / Dart 3.12.0, based on the embedded server's Dart
+requirement and the corresponding Flutter release. SDK constraints declare lower
+bounds, and no custom version-number gate blocks startup. CI tracks the current
+stable branch without a fixed SDK tag or commit.
+
+The Windows job in [the previous run](https://github.com/normalllll/flutter-ui-automation/actions/runs/40369301566/job/121735465281)
+failed during Flutter checkout because an engine golden-image path exceeded the
+Windows Git default path limit. The workflow now enables `core.longpaths` before
+that checkout and prepares FFmpeg for the migrated Dart media tests. A local
+323-character checkout path failed with Git long paths disabled and succeeded
+with them enabled.
+
+The [next remote run](https://github.com/normalllll/flutter-ui-automation/actions/runs/40376724830)
+passed the Python and native-build jobs. Windows then failed at fixture dependency
+resolution; Linux reached the 20-minute job limit while preparing FFmpeg, before
+the Dart tests. The SDK checkout omitted release tags. An isolated shallow-clone
+reproduction using Flutter's unmodified version-detection code returned
+`0.0.0-unknown` without tags and the release version after fetching tags at depth
+one. CI now includes those tags while continuing to follow `stable`. FFmpeg setup
+has a five-minute step limit and noninteractive Linux installation with bounded
+network retries/timeouts and lock waits. Remote results must be checked for the
+current commit; the failed run does not establish acceptance of these corrections.
+
+## Regression coverage after Python retirement
+
+| Behavior retained from the old runtime | Current coverage |
+| --- | --- |
+| Lease/path isolation, attach ownership, stale PID rejection and atomic metadata writes | `sessions_test.dart`, `session_storage_test.dart`, `windows_identity_test.dart` |
+| Explicit Android device/package/token, binary PNGs, selected panel, stale markers and failed originals | `android_capture_test.dart`, `platform_test.dart` |
+| Real encoded duration, PNG retention, full-frame FFV1/BGRA hashes, lossy Android source/projection | `media_test.dart` |
+| Foreground observations, background assertions and temporary-mode cleanup | `foreground_test.dart`, `test_modes_test.dart`, fixture binding tests |
+| Native failure isolation, successful app evidence, later interactions and interruption never passing | `capture_isolation_test.dart`, `acceptance_test.dart` |
+| Independent native capture CLI publication/diagnostics and helper lifetime | `scripts/test_window_capture.py` |
+
+Submission review added regressions for failed session-metadata saves, lost enable
+replies, failed mode restoration and cancellation during final report persistence.
+Live sessions are published only after metadata is durable; cleanup responsibility
+is persisted before enabling a temporary mode and retained until disabling is
+acknowledged. Ordinary and cold verification share cancellation-aware final-report
+publication. All 69 Dart tests passed locally after these changes.
+
+CLI-routing compatibility tests for the deleted Python runtime were retired with
+that interface. Headless migrations exercise the resident implementation; they
+do not claim new GUI/device acceptance.
 
 ## Recorded resident-runtime acceptance
 

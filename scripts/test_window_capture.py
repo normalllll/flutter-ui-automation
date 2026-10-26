@@ -149,7 +149,7 @@ class WindowCaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'without completion metadata'):
             recording.finish()
 
-    def test_legacy_helper_error_is_preserved(self):
+    def test_plain_text_helper_error_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch('window_capture.validate_target'):
                 with patch('window_capture.subprocess.run') as run:

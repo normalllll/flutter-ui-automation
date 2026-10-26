@@ -28,8 +28,9 @@ class Broker {
     await owner.parent.create(recursive: true);
     // The OS releases this non-blocking lock even after a hard process crash.
     // A partially written descriptor cannot strand the next service startup.
-    final lease = await File(p.join(runtime.tools.artifacts, 'service.lock'))
-        .open(mode: FileMode.append);
+    final lease = await File(
+      p.join(runtime.tools.artifacts, 'service.lock'),
+    ).open(mode: FileMode.append);
     try {
       await lease.lock(FileLock.exclusive);
     } on FileSystemException {

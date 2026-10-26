@@ -1,6 +1,7 @@
 """Validate candidate source and local docs without GUI access or dependencies.
 
-Git's index plus non-ignored untracked files define the candidate release, so
+Tracked working-tree files plus non-ignored untracked files define the candidate
+release. Pending deletions are excluded, so cleanup can be checked before staging;
 ignored local evidence cannot satisfy a documentation link.
 """
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -37,6 +38,12 @@ def check():
         cwd=ROOT, capture_output=True, check=True,
     )
     names = sorted(set(result.stdout.decode('utf-8').strip('\0').split('\0')) - {''})
+    deleted = subprocess.run(
+        ['git', 'ls-files', '--deleted', '-z'],
+        cwd=ROOT, capture_output=True, check=True,
+    )
+    removed = set(deleted.stdout.decode('utf-8').strip('\0').split('\0'))
+    names = [name for name in names if name not in removed]
     files = {name: ROOT / name for name in names}
     shipped = {path.resolve() for path in files.values()}
     errors = []

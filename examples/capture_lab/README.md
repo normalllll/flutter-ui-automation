@@ -10,8 +10,6 @@ sessions, interactions, capture and verification.
 - Android test entrypoint: `lib/android_driver_main.dart`; real mobile lifecycle,
   native identity/geometry and explicit Driver text emulation for Unicode input.
 - `test/`: binding restoration, focus guard, adaptive layout and widget checks.
-- `tool/driver.dart` and `tool/record_app.dart`: retained Python regression
-  integration; the resident MCP connects directly through the embedded server.
 
 From the repository root on Windows:
 
@@ -21,8 +19,9 @@ From the repository root on Windows:
 ```
 
 Prepare dependencies with `flutter pub get` here before building through another
-entrypoint. The reference/CI SDK is Flutter 3.47.6 / Dart 3.13.5; resident-runtime
-measurements also cover Flutter 3.47.8 / Dart 3.13.7. See
+entrypoint. Minimum supported toolchains are Flutter 3.44.0 / Dart 3.12.0. CI follows stable
+without an exact tag/commit pin; recorded runtime measurements used Flutter
+3.47.8 / Dart 3.13.7. See
 [installation](../../docs/installation.md) and
 [current validation](../../docs/validation-status.md).
 

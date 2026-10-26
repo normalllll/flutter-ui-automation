@@ -70,8 +70,9 @@ Future<void> main() async {
       ]);
       cold.add(watch.elapsedMicroseconds);
       if (result.exitCode != 0 ||
-          decodeObject(result.stdout as String)
-                  .child('structuredContent')['pid'] !=
+          decodeObject(
+                result.stdout as String,
+              ).child('structuredContent')['pid'] !=
               server.pid) {
         throw StateError(
           'Compiled client did not reuse service: ${result.stderr}',
@@ -113,8 +114,9 @@ Future<void> main() async {
       await until(() async {
         try {
           return decodeObject(
-                await File(p.join(directory.path, 'service.json'))
-                    .readAsString(),
+                await File(
+                  p.join(directory.path, 'service.json'),
+                ).readAsString(),
               )['pid'] ==
               crashed.pid;
         } catch (_) {
@@ -125,16 +127,18 @@ Future<void> main() async {
       await crashed.exitCode;
       await crashErrors;
       await crashOutput;
-      await File(p.join(directory.path, 'service-owner.json'))
-          .writeAsString('{');
+      await File(
+        p.join(directory.path, 'service-owner.json'),
+      ).writeAsString('{');
       recovered = await Process.start(executable, [...args, 'serve']);
       recoveredErrors = recovered.stderr.drain<void>();
       recoveredOutput = recovered.stdout.drain<void>();
       await until(() async {
         try {
           return decodeObject(
-                await File(p.join(directory.path, 'service.json'))
-                    .readAsString(),
+                await File(
+                  p.join(directory.path, 'service.json'),
+                ).readAsString(),
               )['pid'] ==
               recovered!.pid;
         } catch (_) {
@@ -167,8 +171,9 @@ Future<void> main() async {
   } finally {
     await errors;
     await output;
-    await File(p.join(directory.path, 'checks.json'))
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(checks));
+    await File(
+      p.join(directory.path, 'checks.json'),
+    ).writeAsString(const JsonEncoder.withIndent('  ').convert(checks));
     stdout.writeln('Evidence: ${directory.path}');
   }
 }

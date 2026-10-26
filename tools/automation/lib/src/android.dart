@@ -14,8 +14,9 @@ String physicalDisplay(String dump) {
   ).firstMatch(dump);
   final match = section == null
       ? null
-      : RegExp(r'mPrimaryDisplayDevice=.*?\(local:(\d+)\)')
-            .firstMatch(section[1]!);
+      : RegExp(
+          r'mPrimaryDisplayDevice=.*?\(local:(\d+)\)',
+        ).firstMatch(section[1]!);
   if (match == null) {
     throw const AutomationError(
       'display_unresolved',
@@ -35,8 +36,9 @@ class AndroidDevice {
         'Explicit device ID required',
       );
     }
-    if (!RegExp(r'^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$')
-        .hasMatch(package)) {
+    if (!RegExp(
+      r'^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$',
+    ).hasMatch(package)) {
       throw const AutomationError(
         'invalid_package',
         'Valid Android package required',
@@ -71,8 +73,12 @@ class AndroidDevice {
   }
 
   Future<bool> resumed() async {
-    final dump = (await command(['shell', 'dumpsys', 'activity', 'activities']))
-        .text;
+    final dump = (await command([
+      'shell',
+      'dumpsys',
+      'activity',
+      'activities',
+    ])).text;
     return dump
         .split('\n')
         .any(
@@ -242,8 +248,9 @@ class AndroidDevice {
       '--brief',
       package,
     ], cancellation: c)).text.trim().split('\n').last.trim();
-    if (!RegExp('^${RegExp.escape(package)}/[A-Za-z0-9_.\u0024]+\u0024')
-        .hasMatch(component)) {
+    if (!RegExp(
+      '^${RegExp.escape(package)}/[A-Za-z0-9_.\u0024]+\u0024',
+    ).hasMatch(component)) {
       throw const AutomationError(
         'invalid_component',
         'Unexpected launcher component',

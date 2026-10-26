@@ -99,8 +99,9 @@ control/cancellation and CLI reuse. `--expanded` covers the additional callback,
 pixel, timing and lifecycle rules without repeating unrelated groups. Runtime
 tools additionally accept a `checks` subset and native-only capture retries.
 
-After the 2026-10-27 review fixes, the Dart package analysis is clean and
-**35 tests passed** on Windows. The retained Python migration suite also passed **46 tests**. The compiled distribution
+After the 2026-10-27 review and runtime cleanup, **69 Dart tests passed** on
+Windows. Python retains only the repository checker and independent native
+capture wrapper/media helper, with **11 wrapper tests passed**. The compiled distribution
 and repository/link checks passed locally. The added CI steps have not run on
 GitHub yet.
 

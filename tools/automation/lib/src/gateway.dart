@@ -10,11 +10,12 @@ import 'package:stream_channel/stream_channel.dart';
 
 import 'protocol.dart';
 
-typedef ToolHandler = Future<Json> Function(
-  String name,
-  Json arguments,
-  Cancellation cancellation,
-);
+typedef ToolHandler =
+    Future<Json> Function(
+      String name,
+      Json arguments,
+      Cancellation cancellation,
+    );
 
 class OfficialBridge {
   OfficialBridge(this._send);
@@ -264,8 +265,9 @@ class AutomationGateway {
         call.cancellation.cancel();
       }
       try {
-        await Future.wait(_active.values.map((c) => c.completion))
-            .timeout(const Duration(seconds: 70));
+        await Future.wait(
+          _active.values.map((c) => c.completion),
+        ).timeout(const Duration(seconds: 70));
       } catch (e) {
         stderr.writeln('Active call shutdown: $e');
       }

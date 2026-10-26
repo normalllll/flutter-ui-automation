@@ -2,7 +2,7 @@
 
 Read this for Windows-only window placement, native capture and background
 foreground simulation. Use the [resident MCP](mcp.md) for new runs;
-the Python CLI remains a legacy regression interface.
+the Python tool is available separately for independent HWND/PID capture.
 
 ## Defaults
 
@@ -97,23 +97,18 @@ OS shortcuts, activation-dependent plugins or `GetForegroundWindow()` behavior.
 
 ## Included working example and tools
 
-Read [the MCP workflow](mcp.md) for current commands and
-[legacy usage](usage.md) for Python regression and independent capture commands.
-The runnable fixture is `examples/capture_lab/`.
+Read [the MCP workflow](mcp.md) for Flutter commands and
+[independent capture](usage.md) for the standalone Python wrapper. The fixture is
+`examples/capture_lab/`.
 
-- `tools/automation/`: current resident MCP, shared Driver sessions and compiled
+- `tools/automation/`: resident MCP, shared Driver sessions and compiled
   persistent CLI for interaction, app/native media and verification.
-- `scripts/lab.py`: legacy start/stop, internal interaction, app/window
-  screenshots, app/window recordings and the end-to-end verification report.
-- `scripts/window_capture.py`: independent HWND + PID screenshot/recording CLI.
-- `scripts/media.py`: full-resolution FFV1/BGRA masters, source-frame hashes and
-  explicitly labelled MP4 viewing copies.
-- `tools/window_capture/`: standalone C++20 PrintWindow / Windows Graphics Capture executable;
-  builds with the example or separately with CMake and Visual C++.
-- `examples/capture_lab/tool/driver.dart`: Driver CLI using the example's
-  additional state/capture hooks. It is not a universal protocol for release apps.
+- `scripts/window_capture.py` and `scripts/media.py`: independent HWND/PID
+  capture and verified FFV1/BGRA masters with MP4 previews.
+- `tools/window_capture/`: standalone C++20 PrintWindow/WGC executable; builds
+  with the fixture or independently with CMake and Visual C++.
 
-Use absolute paths based on this skill's location; do not assume the current
-working directory is the example. Refer to the measured results in
-[MCP validation](../docs/mcp-validation.md), without treating those as verification
-of a different application.
+Use absolute paths based on this skill's location. Measured results are in
+[MCP validation](../docs/mcp-validation.md), with scope in
+[validation status](../docs/validation-status.md). Fixture evidence does not
+establish acceptance of another application.

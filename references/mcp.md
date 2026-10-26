@@ -15,7 +15,8 @@ From the complete repository on Windows, with an installed Flutter SDK:
 # For Android, use -Fixture android, or automation_build below.
 ```
 
-The service requires Dart 3.13+, supplied by Flutter. Native media capture needs
+Minimum supported toolchains are Flutter 3.44.0 and Dart 3.12.0. SDK constraints
+declare lower bounds; no exact SDK version is pinned or parsed to block startup. Native media capture needs
 FFmpeg/FFprobe; Android needs ADB and an explicitly authorized device. Windows
 needs its C++/Windows SDK toolchain. Building the Windows fixture also builds the
 capture helper. Paths resolve from PATH, `FLUTTER_ROOT`, `ADB`, `FFMPEG`,
@@ -134,7 +135,9 @@ the same rate. App `fps` remains a separate sampling setting.
 `automation_inspect_video` decodes retained video and optionally checks a content
 region. The fixture verifier measures animation pixels inside the actual stage,
 excluding clocks, heartbeats and markers. `automation_verify` accepts optional
-`checks` to rerun only relevant groups. It refuses network apps.
+`checks` to rerun only relevant groups. It refuses network apps. Partial reports
+remain `completed: false` and `passed: false` until the requested verification
+finishes; interruption never promotes partial successes into acceptance.
 `automation_verify_cold` explicitly performs 1..5 cold fixture launches, defaults
 to one, checks presentation fences and stops its own sessions. It requires other
 sessions to be finished first.

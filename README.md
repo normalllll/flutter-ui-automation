@@ -9,8 +9,8 @@ Windows capture helper and a Flutter reference fixture. Maintained by
 
 The current runtime is `tools/automation/`: one resident service embeds the
 official Dart/Flutter MCP and keeps Driver connections and app sessions alive.
-Python is required only for developer repository checks and the retained legacy
-regression tools. Other apps need their own Debug Driver/test hooks; the fixture
+Python is required only for repository checks and the independent Windows
+window-capture tool. Other apps need their own Debug Driver/test hooks; the fixture
 is not a universal protocol for arbitrary release applications.
 
 | Platform | Control and content | System presentation | Boundary |
@@ -41,10 +41,13 @@ Platform details: [Windows](references/windows.md), [Android](references/android
 
 ## Prepare the service
 
-Use Flutter's Dart **3.13+**. FFmpeg/FFprobe are required for video. Windows builds
+Minimum supported toolchains are **Flutter 3.44.0 and Dart 3.12.0**.
+FFmpeg/FFprobe are required for video. Windows builds
 need the Visual C++/Windows SDK toolchain and Android needs its Flutter/ADB
-prerequisites. The fixture and CI pin is **Flutter 3.47.6 / Dart 3.13.5**; local
-resident-runtime evidence used **Flutter 3.47.8 / Dart 3.13.7**.
+prerequisites. CI follows the current stable Flutter channel without a fixed tag
+or commit.
+SDK declarations express minimum requirements, and there is no custom runtime
+version gate. Recorded local evidence used **Flutter 3.47.8 / Dart 3.13.7**.
 
 Clone or install the complete repository. From its root on Windows:
 
@@ -171,13 +174,12 @@ dart run bin/check_startup.dart
 
 Linux headless CI compiles to `build/automation`; the startup check selects the
 platform's executable. CI runs Dart/Flutter analysis and headless tests on Linux
-and Windows, Python contracts on Windows, compiled MCP startup and standalone
+and Windows, standalone Python capture tests on Windows, compiled MCP startup and
 Windows helper compilation. It does not establish native capture/visual acceptance.
 
-The retained Python tools support migration/regression checks and independent
-capture usage. Their commands remain in [legacy Windows usage](references/usage.md)
-and [Android usage](references/android.md); development checks are in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Flutter sessions and their regressions use Dart exclusively. Python remains for
+repository checks and [independent Windows capture](references/usage.md).
+Development checks are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Current evidence, test counts and limitations are maintained in
 [validation status](docs/validation-status.md), with runtime measurements and
@@ -189,7 +191,7 @@ reproduction commands in [MCP validation](docs/mcp-validation.md).
 tools/automation/       Resident Dart MCP, persistent CLI and regression tests
 tools/window_capture/   Independent C++20 PrintWindow/WGC helper
 examples/capture_lab/  Flutter Windows/Android reference fixture
-scripts/              Repository checks and retained Python regression tools
+scripts/              Repository checks and independent Windows capture
 references/           Current workflow, platform and capture contracts
 docs/                 Installation, validation summary and runtime measurements
 SKILL.md              Shared agent instructions

@@ -1,6 +1,21 @@
 part of 'runtime.dart';
 
 extension FixtureVerification on AutomationRuntime {
+  Future<void> _publishVerification(
+    File file,
+    Json report,
+    Cancellation cancellation,
+    Future<void> Function() checkpoint,
+  ) async {
+    cancellation.check();
+    await writeJson(file, report);
+    // Both ordinary and cold verification can be cancelled during final I/O.
+    if (cancellation.cancelled) {
+      await checkpoint();
+      cancellation.check();
+    }
+  }
+
   Future<Json> verify(
     Session session,
     Json args,
@@ -18,13 +33,22 @@ extension FixtureVerification on AutomationRuntime {
     });
     await Directory(directory).create(recursive: true);
     final items = <Json>[];
+    Future<void> checkpoint() =>
+        writeJson(File(p.join(directory, 'report.json')), {
+          'sessionId': session.id,
+          'completed': false,
+          'passed': false,
+          'items': items,
+          'directory': directory,
+        });
+    await checkpoint();
     Future<void> check(String name, Future<Json> Function() action) async {
       if (args['checks'] != null && !args.items('checks').contains(name)) {
         return;
       }
       cancellation.check();
       items.add(await _item(name, action));
-      await writeJson(File(p.join(directory, 'report.json')), {'items': items});
+      await checkpoint();
     }
 
     void require(bool value, String message) {
@@ -414,14 +438,23 @@ extension FixtureVerification on AutomationRuntime {
         }, Cancellation());
       }
     }
+    cancellation.check();
+    final finalState = await session.state();
+    cancellation.check();
     final report = {
       'sessionId': session.id,
+      'completed': true,
       'passed': items.every((i) => i['passed'] == true),
       'items': items,
       'directory': directory,
-      'finalState': await session.state(),
+      'finalState': finalState,
     };
-    await writeJson(File(p.join(directory, 'report.json')), report);
+    await _publishVerification(
+      File(p.join(directory, 'report.json')),
+      report,
+      cancellation,
+      checkpoint,
+    );
     return report;
   }
 
@@ -582,7 +615,7 @@ extension FixtureVerification on AutomationRuntime {
             ),
       ),
     };
-    await writeJson(File(path), report);
+    await _publishVerification(File(path), report, cancellation, checkpoint);
     return {...report, 'report': path};
   }
 }

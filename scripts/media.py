@@ -5,26 +5,6 @@ import shutil
 import subprocess
 
 
-def inspect_video(path, region=None):
-    """Decode a video and measure changes in the requested content region."""
-    import json
-    from runtime import run, program
-    metadata = json.loads(run([program('ffprobe'), '-v', 'error', '-select_streams', 'v:0',
-                               '-show_streams', '-show_format', '-of', 'json', path]).stdout)
-    if not metadata.get('streams'):
-        raise RuntimeError('Recording contains no video stream')
-    stream = metadata['streams'][0]
-    crop = 'crop={width}:{height}:{x}:{y},'.format(**region) if region else ''
-    hashes = ffmpeg('-i', path, '-vf', crop + 'fps=2,scale=64:36',
-                    '-pix_fmt', 'rgb24', '-f', 'framemd5', '-')
-    frames = frame_hashes(hashes)
-    if len(frames) < 2:
-        raise RuntimeError('Recording cannot be decoded into multiple sample frames')
-    return {'durationSeconds': float(metadata['format']['duration']),
-            'width': stream['width'], 'height': stream['height'],
-            'codec': stream['codec_name'], 'decodedSamples': len(frames),
-            'uniqueSampleFrames': len(set(frames)), 'decodable': True}
-
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -76,17 +56,3 @@ def finalize_master(preview, source_hashes):
             'sourceFrameHashes': str(source_hashes), 'losslessVerified': True,
             'masterWidth': width, 'masterHeight': height,
             'verifiedFrames': len(actual)}
-
-
-def encode_png_sequence(preview, frames, fps=5):
-    preview, frames = Path(preview), Path(frames)
-    master = preview.with_suffix('.lossless.mkv')
-    source = preview.with_suffix('.source.framemd5')
-    for stale in (preview, master, source):
-        stale.unlink(missing_ok=True)
-    count = len(list(frames.glob('*.png')))
-    ffmpeg('-y', '-framerate', fps, '-i', frames/'%04d.png',
-        '-map', '0:v:0', '-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'bgra', master,
-        '-map', '0:v:0', '-c:v', 'rawvideo', '-pix_fmt', 'bgra', '-f', 'framemd5', source,
-        timeout=media_timeout(count))
-    return {**finalize_master(preview, source), 'originalFramesDirectory': str(frames)}

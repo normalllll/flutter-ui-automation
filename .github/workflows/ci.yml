@@ -28,20 +28,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Prepare FFmpeg
-        shell: pwsh
-        run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg --yes --no-progress
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          ffmpeg -version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ffprobe -version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check repository and documentation
         run: python -B scripts/check_repository.py
-      - name: Run contracts and media tests (no app or device)
+      - name: Test independent Windows capture tool (no app or device)
         run: python -B -m unittest discover -s scripts -p "test_*.py" -v
 
   flutter:
@@ -62,18 +51,40 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Get reference Flutter SDK (3.47.6)
+      - name: Enable long SDK paths on Windows
+        if: runner.os == 'Windows'
+        # Flutter engine golden-image paths can exceed Windows Git's default limit.
+        run: git config --global core.longpaths true
+      - name: Get current stable Flutter SDK
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: flutter/flutter
-          ref: 3.47.6
+          ref: stable
           path: .cache/flutter
+          # Flutter derives its framework version from release tags.
+          fetch-depth: 1
+          fetch-tags: true
           persist-credentials: false
       - name: Prepare SDK
         run: |
-          test "$(git -C .cache/flutter rev-parse HEAD)" = "5fc346839b5d0eef006ed8404392afb4dfae428d"
           echo "$GITHUB_WORKSPACE/.cache/flutter/bin" >> "$GITHUB_PATH"
           .cache/flutter/bin/flutter --version
+      - name: Prepare FFmpeg for Dart media tests
+        timeout-minutes: 5
+        run: |
+          if ! command -v ffmpeg || ! command -v ffprobe; then
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              choco install ffmpeg --yes --no-progress
+            else
+              # Hosted images have extra apt sources. Bound unreachable mirrors
+              # and keep package/service configuration noninteractive in CI.
+              apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60)
+              sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" update
+              sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install --yes --no-install-recommends ffmpeg
+            fi
+          fi
+          ffmpeg -version
+          ffprobe -version
       - name: Resolve fixture dependencies
         working-directory: examples/capture_lab
         run: flutter pub get

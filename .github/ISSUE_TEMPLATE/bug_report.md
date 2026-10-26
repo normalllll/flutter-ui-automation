@@ -8,7 +8,7 @@ and personal paths. Use SECURITY.md for sensitive vulnerabilities.
 
 **Platform and versions**
 
-OS/device type, repository revision, Python, Flutter/Dart and FFmpeg versions.
+OS/device type, repository revision, Flutter/Dart and FFmpeg versions; include Python only for standalone capture/checks.
 
 **Steps to reproduce**
 

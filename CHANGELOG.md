@@ -2,6 +2,12 @@
 
 ## 0.2.0 — unreleased
 
+- Retire the Python Flutter runtime and per-command Dart Driver entrypoints;
+  migrate session/device/capture/media/acceptance regressions to the resident
+  Dart implementation. Retain repository checks and independent HWND capture.
+- Declare minimum Flutter 3.44.0 / Dart 3.12.0, follow stable SDKs in CI, and enable
+  Windows Git long paths before the SDK checkout. Include SDK release tags for
+  version detection and bound noninteractive FFmpeg package preparation.
 - Resident Dart MCP embedding the official Dart/Flutter server, with persistent
   Driver sessions, an authenticated CLI broker, jobs and cancellation.
 - Shared Windows/Android interaction, capture, recording and verification tools;

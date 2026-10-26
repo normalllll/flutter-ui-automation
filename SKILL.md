@@ -19,7 +19,7 @@ rebuilds. Do not launch a new controller or app for each screenshot.
 ## Select the platform
 
 - **Windows:** read [references/windows.md](references/windows.md), then
-  [references/usage.md](references/usage.md) for legacy commands, native tool
+  [references/usage.md](references/usage.md) for independent capture commands, native tool
   setup and integrations. WGC/PrintWindow, HWND/PID checks, non-activation,
   placement, and background foreground simulation belong to Windows only.
 - **Android:** read [references/android.md](references/android.md) for mandatory
@@ -85,23 +85,15 @@ unless specifically requested.
   `build.ps1` compiles once and subsequent calls reuse the service.
 - `references/mcp.md`: current API, editing loop, retries and ownership rules.
 
-The Python scripts below remain developer migration/regression tools. Do not
-select them as the normal runtime or require Python on a Flutter-only machine.
+Python remains only for developer repository checks and the independent Windows
+window-capture tool. The resident workflow never needs Python:
 
-- `scripts/lab.py` / `lab_cli.py`: public CLI and platform routing. Default remains
-  Windows; Android requires `--platform android --device ACTUAL_SERIAL`.
-- `scripts/flutter_client.py`: common Driver interaction, app screenshots and
-  PNG-source app recordings. Custom fixture hooks are advertised in `state`.
-- `scripts/sessions.py` / `host_process.py`: device session paths, launch leases
-  and host supervisor identity. Windows retains legacy session compatibility.
-- `scripts/windows_platform.py`, `window_capture.py`, `tools/window_capture/`:
-  Windows lifecycle and independent native capture.
-- `scripts/windows_evidence.py`: observational foreground/focus evidence,
-  conditional background checks and restoration to the latest actual state.
-- `scripts/android_platform.py` / `android_device.py`: Android fixture sessions
-  and scoped ADB display capture. Native system UI automation is separate.
-- `scripts/verify_windows.py`, `verify_scenarios.py`, `verify_android.py`: platform
-  acceptance and reports; static checks do not establish runtime/visual coverage.
+- `scripts/check_repository.py`: candidate source, metadata and Markdown links.
+- `scripts/window_capture.py`, `scripts/media.py`, `tools/window_capture/`:
+  standalone HWND/PID capture and verified native lossless media.
+- `scripts/test_window_capture.py`: standalone wrapper regressions.
+- `tools/automation/test/`: session/device identity, capture failure isolation,
+  foreground policy, interruption and real FFmpeg media regressions for MCP.
 
 Current Windows/Android measurements are in
 [docs/mcp-validation.md](docs/mcp-validation.md), with scope and historical

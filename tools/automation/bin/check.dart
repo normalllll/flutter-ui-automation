@@ -225,7 +225,8 @@ Future<void> main(List<String> args) async {
             throw StateError('Source edit replaced the native app');
           }
           checks.add({
-            'name': 'real BooruFlow lib edit via staging junction and source restored',
+            'name':
+                'real BooruFlow lib edit via staging junction and source restored',
             'passed': true,
             'source': await source.resolveSymbolicLinks(),
             'pid': originalPid,
@@ -534,10 +535,12 @@ Future<void> main(List<String> args) async {
     });
     exitCode = 1;
   } finally {
-    await File(p.join(output.path, 'transcript.json'))
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(transcript));
-    await File(p.join(output.path, 'checks.json'))
-        .writeAsString(const JsonEncoder.withIndent('  ').convert(checks));
+    await File(
+      p.join(output.path, 'transcript.json'),
+    ).writeAsString(const JsonEncoder.withIndent('  ').convert(transcript));
+    await File(
+      p.join(output.path, 'checks.json'),
+    ).writeAsString(const JsonEncoder.withIndent('  ').convert(checks));
     await client.close();
     await server.exitCode.timeout(const Duration(seconds: 90));
     await stderrDone;

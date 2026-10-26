@@ -53,9 +53,8 @@ continuous audit of every platform event.
 
 After simulation is disabled, the expected state is the latest actual lifecycle
 and view-focus event, including `resumed`/`focused` after user inspection. State
-snapshots expose `rawViewFocus` for the current view. With an older fixture that
-does not expose this field, focus restoration is explicitly not assessed until
-the test entrypoint is rebuilt; lifecycle restoration is still checked.
+snapshots expose `rawViewFocus` for the current view. The current fixture always exposes this field; a never-focused view may have
+no raw event, in which case restoration uses the platform initial unfocused state.
 
 ## What this establishes
 

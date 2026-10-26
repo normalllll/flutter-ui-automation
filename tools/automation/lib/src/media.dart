@@ -419,8 +419,9 @@ class Media {
         '$seconds',
         remote,
       ], timeout: Duration(seconds: seconds + 25));
-      await File('$stem.screenrecord.log')
-          .writeAsString('${recording.text}\n${recording.error}');
+      await File(
+        '$stem.screenrecord.log',
+      ).writeAsString('${recording.text}\n${recording.error}');
       cancellation.check();
       await device.requireTarget(cancellation);
       await device.command(

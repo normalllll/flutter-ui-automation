@@ -102,9 +102,9 @@ class Toolchain {
     this.flutterRoot =
         flutterRoot ?? this.environment['FLUTTER_ROOT'] ?? _findFlutter();
     this.artifacts = p.normalize(
-      Directory(artifacts ?? p.join(root, 'artifacts', 'service'))
-          .absolute
-          .path,
+      Directory(
+        artifacts ?? p.join(root, 'artifacts', 'service'),
+      ).absolute.path,
     );
   }
   final String root;
@@ -195,8 +195,9 @@ class Toolchain {
     final candidate = p.normalize(
       p.join(p.dirname(executable), '..', '..', '..', '..'),
     );
-    if (File(p.join(candidate, 'bin', 'cache', 'flutter_tools.snapshot'))
-        .existsSync()) {
+    if (File(
+      p.join(candidate, 'bin', 'cache', 'flutter_tools.snapshot'),
+    ).existsSync()) {
       return candidate;
     }
     for (final directory in (environment['PATH'] ?? '').split(

@@ -7,16 +7,17 @@ content and personal paths from public reports.
 
 ## Development setup
 
-For `tools/automation/`, use Flutter's Dart 3.13+, then `dart pub get`,
+For `tools/automation/`, use Flutter's Dart 3.12+, then `dart pub get`,
 `dart format --output=none --set-exit-if-changed bin lib test`, `dart analyze` and
 `dart test`. Compile the executable, then run `dart run bin/check_startup.dart`
 to exercise the compiled MCP and CLI without an app or device. Python is not
-part of the resident runtime. Use the legacy checks below when their source or
-shared native/fixture contracts change.
+part of the resident runtime. The Python checks below cover the repository and
+standalone Windows window-capture wrapper.
 
 Clone the complete repository. Use Python 3.11+ and FFmpeg/FFprobe on PATH. Python
-tools have no third-party Python dependencies. Flutter work uses Flutter 3.47.6
-(Dart 3.13.5); run `flutter pub get` in `examples/capture_lab/` first. Windows
+tools have no third-party Python dependencies. Minimum supported toolchains are
+Flutter 3.44.0 and Dart 3.12.0; run `flutter pub get` in
+`examples/capture_lab/` first. Windows
 native compilation also requires Visual Studio's Desktop development with C++,
 CMake and the Windows SDK. See [installation](docs/installation.md).
 
@@ -27,9 +28,10 @@ python -B scripts/check_repository.py
 python -B -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-The complete Python suite runs on Windows: it uses real process identity and
-invalid-HWND checks as well as mocked device calls and tiny FFmpeg encodes. It
-does not launch a fixture, connect to a device or control desktop input. If
+The Python suite runs on Windows and checks HWND/PID scope, capture diagnostics,
+atomic publication and helper cleanup. Dart tests own Flutter sessions, Android
+identity/capture, interruption, foreground policy and real FFmpeg media coverage.
+Neither suite launches a fixture, connects to a device or controls desktop input. If
 `python` is unavailable, use the absolute path to an existing Python 3.11+
 executable.
 
@@ -43,7 +45,12 @@ flutter test --no-pub
 These tests use the headless test runner. Native capture and mobile runtime
 acceptance are separate, authorized checks described in the platform references.
 Do not start apps, boot emulators or capture screens merely to satisfy a static
-or unit-test change. CI never establishes visual acceptance.
+or unit-test change. CI follows current stable Flutter without a fixed SDK tag or
+commit. Its shallow SDK checkout includes release tags so Flutter can identify its
+version for dependency resolution. FFmpeg preparation has a five-minute step limit;
+Linux package setup is noninteractive with bounded network and lock waits.
+No custom SDK-version startup gate is used.
+CI never establishes visual acceptance.
 
 ## Changes and evidence
 

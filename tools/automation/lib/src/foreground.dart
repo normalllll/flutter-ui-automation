@@ -25,7 +25,8 @@ Json backgroundActivity(Json before, Json after) {
     return {
       'status': 'not_assessed',
       'passed': null,
-      'reason': 'Uninterrupted background interval was not established; captures remain independently valid',
+      'reason':
+          'Uninterrupted background interval was not established; captures remain independently valid',
     };
   }
   final passed = before['foregroundTicks'] == after['foregroundTicks'];

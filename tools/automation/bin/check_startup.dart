@@ -18,8 +18,9 @@ Future<void> main(List<String> args) async {
         ? p.join('build', Platform.isWindows ? 'automation.exe' : 'automation')
         : args.single,
   );
-  final artifacts = await Directory(p.join(root, 'artifacts'))
-      .create(recursive: true);
+  final artifacts = await Directory(
+    p.join(root, 'artifacts'),
+  ).create(recursive: true);
   final output = await artifacts.createTemp('compiled-startup-');
   final environment = {
     for (final entry in Platform.environment.entries)
@@ -68,13 +69,19 @@ Future<void> main(List<String> args) async {
     }
     // The helper only accepts integer fps. Validate this at the public wire
     // boundary, before any session or capture process is needed.
-    final invalid = await client.tool('automation_record', {
-      'nativeFps': 1.5,
-      'job': false,
-    });
-    if (invalid['isError'] != true ||
-        invalid.child('structuredContent')['code'] != 'invalid_argument') {
-      throw StateError('Fractional native fps was accepted: $invalid');
+    for (final invalidArguments in <Json>[
+      {'nativeFps': 1.5},
+      {'seconds': 0},
+      {'seconds': 31},
+    ]) {
+      final invalid = await client.tool('automation_record', {
+        ...invalidArguments,
+        'job': false,
+      });
+      if (invalid['isError'] != true ||
+          invalid.child('structuredContent')['code'] != 'invalid_argument') {
+        throw StateError('Invalid recording bounds were accepted: $invalid');
+      }
     }
     final valid = await client.tool('automation_record', {
       'nativeFps': 12,
@@ -127,7 +134,7 @@ Future<void> main(List<String> args) async {
       'dartSdkEnvironmentHints': false,
       'checks': [
         'compiled MCP initialization and merged tools',
-        'native fps validation before session access',
+        'recording duration/fps validation before session access',
         'compiled CLI reuse of the same server',
         'EOF shutdown and descriptor cleanup',
       ],

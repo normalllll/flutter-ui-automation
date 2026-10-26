@@ -235,8 +235,9 @@ class Sessions {
       if (actual['sessionId'] == expected['sessionId'] &&
           actual['pid'] == expected['pid'] &&
           (expectedIdentity is Json
-              ? _identity(expectedIdentity)
-                    .same(_identity(actual.child('identity')))
+              ? _identity(
+                  expectedIdentity,
+                ).same(_identity(actual.child('identity')))
               : actual['identity'] == null)) {
         return;
       }
@@ -257,6 +258,29 @@ class Sessions {
     await File(p.join(lease.path, 'owner')).delete();
     // Delete only the empty directory; never enumerate and delete other claims.
     await lease.delete();
+  }
+
+  Future<void> _requireCleanupTarget(Session session) async {
+    if (session.platform == TargetPlatform.windows) {
+      final expected = session.windowsIdentity;
+      final current = expected == null
+          ? null
+          : WindowsApi().identity(expected.pid);
+      if (current == null || expected!.same(current)) return;
+    } else {
+      final current = await session.android!.identity();
+      final expected = session.androidIdentity;
+      if (current == null ||
+          current['pid'] == expected?['pid'] &&
+              (expected?['startTicks'] == null ||
+                  current['startTicks'] == expected?['startTicks'])) {
+        return;
+      }
+    }
+    throw const AutomationError(
+      'target_changed',
+      'Native process identity changed; refusing to restore or stop a different app',
+    );
   }
 
   Uri _vmEndpoint(String value) {
@@ -620,8 +644,8 @@ class Sessions {
       );
       session.androidIdentity = await android?.identity();
       session.lastState = state;
-      active[id] = session;
       await session.save();
+      active[id] = session;
       return session;
     } catch (error) {
       try {
@@ -658,6 +682,9 @@ class Sessions {
     } catch (e) {
       errors.add('State unavailable during cleanup: $e');
     }
+    // Failed state observation can mean a destroyed HWND, an exited process,
+    // or a replacement instance. Only the first two permit owned cleanup.
+    await _requireCleanupTarget(session);
     for (final restore in <Future<Json> Function()>[
       if (session.simulated)
         () => session.connection.hook('pretendForeground', {'enabled': false}),
@@ -683,6 +710,7 @@ class Sessions {
       errors.add('Disconnect: $e');
     }
     if (session.owned) {
+      await _requireCleanupTarget(session);
       try {
         await session.flutter?.request(
           session.executableProcess != null ? 'app.detach' : 'app.stop',

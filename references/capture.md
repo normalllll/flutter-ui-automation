@@ -1,7 +1,7 @@
 # Presentation synchronization and original pixels
 
 This guide describes the Windows fixture/native-helper capture contract shared
-by the resident MCP and retained Python tools. Android original screenrecord is
+by the resident MCP and independent Python window-capture tool. Android original screenrecord is
 lossy; its projection and media contract are described in [the MCP workflow](mcp.md).
 
 ## Separate rendering from presentation
@@ -130,11 +130,10 @@ and `timingPassed`; app acquisition and Android encoded duration use a 15%
 tolerance. Native helper timing and fresh-frame observations are retained
 separately. Inspect each channel's actual timing fields as well as its video.
 
-The retained Python Windows regression recorders report `elapsedMs`, `expectedMs`,
-`lateFrames` (frames emitted more than half an interval late) and `maxLagMs`.
-Their `verify` requires elapsed time within max(500 ms, 5%) of the expected length
-and at most 5% late frames. The native pacing clock starts once the first
-frame reaches FFmpeg, so encoder startup no longer causes an initial burst.
+The native helper reports `elapsedMs`, `expectedMs`, `lateFrames` and `maxLagMs`.
+Its pacing clock begins once the first frame reaches FFmpeg. The standalone
+wrapper retains these observations; fixture timing acceptance is implemented by
+the resident verifier.
 
 `freshFrames` is labelled by `freshFrameMeaning`: `wgc_presented_frames`
 counts frames DWM actually delivered; `printwindow_changed_frames` counts
