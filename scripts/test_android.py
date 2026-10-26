@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import zlib
 import time
 
-from android_device import AndroidDevice, DeviceRecording, marker_matches, png_size
+from android_device import AndroidDevice, DeviceRecording, default_display_id, marker_matches, png_size
 from android_platform import AndroidPlatform, PACKAGE
 from lab_cli import main
 from sessions import SessionStore, target_key
@@ -95,6 +95,21 @@ class SessionTests(unittest.TestCase):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_fold_capture_uses_logical_primary_panel_instead_of_first_physical_panel(self):
+        dump = '''Logical Displays: size=2
+  Display 0:
+    mPrimaryDisplayDevice=Built-in screen(local:4630946872173396372)
+    mIsEnabled=true
+  Display 1:
+    mPrimaryDisplayDevice=Built-in screen(local:4630946449689556883)
+    mIsEnabled=false
+'''
+        self.assertEqual(default_display_id(dump), '4630946872173396372')
+        folded = dump.replace('4630946872173396372', 'swap').replace('4630946449689556883', '4630946872173396372').replace('swap', '4630946449689556883')
+        self.assertEqual(default_display_id(folded), '4630946449689556883')
+        with self.assertRaisesRegex(RuntimeError, 'ambiguous capture'):
+            default_display_id('Display 1:\n mPrimaryDisplayDevice=Other(local:12)')
+
     def test_configured_app_rate_matches_encoded_duration(self):
         from flutter_client import FlutterClient
         from media import inspect_video
@@ -166,13 +181,14 @@ class CaptureTests(unittest.TestCase):
             write_marker_png(output, 0xa00002a5)
             original = output.read_bytes()
             device = AndroidDevice('serial:5555', PACKAGE)
-            with patch.object(device, 'require_target') as scope, patch('android_device.adb_binary', return_value='adb'), \
+            with patch.object(device, 'require_target') as scope, patch.object(device, 'display_id', return_value='4630946872173396372'), patch('android_device.adb_binary', return_value='adb'), \
                  patch('android_device.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=original)) as execute:
                 result = device.screenshot(output)
             self.assertEqual(output.read_bytes(), original)
             self.assertFalse(result['presentationVerified'])
             self.assertEqual(scope.call_count, 2)
             self.assertEqual(execute.call_args.args[0][:3], ['adb', '-s', 'serial:5555'])
+            self.assertEqual(execute.call_args.args[0][-2:], ['-d', '4630946872173396372'])
 
     def test_marker_timeout_leaves_no_stale_image(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -190,13 +206,45 @@ class CaptureTests(unittest.TestCase):
                 if args[:3] == ['adb', '-s', 'serial']:
                     return SimpleNamespace(returncode=0, stdout=fresh.read_bytes())
                 return real_run(args, **kwargs)
-            with patch.object(device, 'require_target'), patch('android_device.adb_binary', return_value='adb'), \
+            with patch.object(device, 'require_target'), patch.object(device, 'display_id', return_value='12'), patch('android_device.adb_binary', return_value='adb'), \
                  patch('android_device.subprocess.run', side_effect=execute):
                 with self.assertRaisesRegex(TimeoutError, 'never presented'):
                     device.screenshot(output, probe, seconds=0)
             self.assertFalse(output.exists())
             self.assertEqual(output.with_name('shot.failed-device.png').read_bytes(), fresh.read_bytes())
             self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ['fresh.png', 'shot.failed-device.png'])
+
+    def test_panel_switch_retains_failed_frame_without_publishing_a_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)/'shot.png'
+            write_marker_png(output, 0xa00002a5)
+            original = output.read_bytes()
+            device = AndroidDevice('fold', PACKAGE)
+            with patch.object(device, 'require_target'), \
+                 patch.object(device, 'display_id', side_effect=['12', '34']), \
+                 patch('android_device.adb_binary', return_value='adb'), \
+                 patch('android_device.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=original)):
+                with self.assertRaisesRegex(RuntimeError, 'panel changed'):
+                    device.screenshot(output)
+            self.assertFalse(output.exists())
+            self.assertEqual(output.with_name('shot.failed-device.png').read_bytes(), original)
+
+    def test_recording_selects_the_same_panel_as_its_source_screenshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            device = MagicMock(serial='fold')
+            device.screenshot.return_value = {'width': 1080, 'height': 2520, 'displayId': '34'}
+            process = MagicMock()
+            process.poll.return_value = 0
+            device.command.return_value.returncode = 0
+            recording = DeviceRecording(device, Path(directory)/'clip.mp4', 2)
+            with patch('android_device.adb_binary', return_value='adb'), \
+                 patch('android_device.subprocess.Popen', return_value=process) as launch:
+                try:
+                    recording.start()
+                    args = launch.call_args.args[0]
+                    self.assertEqual(args[args.index('--display-id') + 1], '34')
+                finally:
+                    recording.close()
 
     def test_recording_start_clears_previous_outputs(self):
         with tempfile.TemporaryDirectory() as directory:

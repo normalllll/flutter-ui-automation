@@ -9,10 +9,17 @@ Control Flutter through its test/Driver connection. Capture Flutter content and
 system-presented pixels as separate channels. Inspect actual images before
 claiming visual acceptance.
 
+Use the resident Dart MCP for new runs. Read [references/mcp.md](references/mcp.md)
+for one-time compilation, MCP registration, the persistent CLI and session
+ownership. It embeds the official Flutter/Dart MCP in the same process and
+requires no Python. Keep the app session alive while editing source; use hot
+reload/restart and continue with affected checks. Native/SDK changes still need
+rebuilds. Do not launch a new controller or app for each screenshot.
+
 ## Select the platform
 
 - **Windows:** read [references/windows.md](references/windows.md), then
-  [references/usage.md](references/usage.md) for existing commands, native tool
+  [references/usage.md](references/usage.md) for legacy commands, native tool
   setup and integrations. WGC/PrintWindow, HWND/PID checks, non-activation,
   placement, and background foreground simulation belong to Windows only.
 - **Android:** read [references/android.md](references/android.md) for mandatory
@@ -52,12 +59,34 @@ Resolve paths from this skill directory. The working fixture stays under
    real lifecycle evidence separately. Preserve physical-resolution source PNGs
    and any true lossless masters. Android's original screenrecord video is lossy;
    converting it to a lossless codec does not recover original display pixels.
+   On Windows, the user may bring the target forward to inspect it. Keep real
+   foreground/focus observations, activation counts and recording samples, but
+   never reject captures solely because they are nonzero. Those observations
+   do not identify who activated the window. Automation must still avoid raising
+   or focusing it. Mark background-only checks not assessed when their required
+   uninterrupted background interval was not established; restore the latest
+   actual platform state, including a focused window.
 6. Restore test modes and stop only sessions started for this work, unless the
    user asked to keep them. Retain diagnostic artifacts and failed attempts.
    Required missing capabilities fail acceptance; optional unsupported native UI
    actions remain explicit rather than being counted as tested.
 
 ## Implementation boundaries
+
+Retry only the actually failed capture/channel. Retain successful images and
+failed-attempt diagnostics; user inspection or one stale frame does not fail an
+unrelated batch. Inspect per-item results as well as job completion. Run the
+offline fixture verifier only on that fixture. For real networked apps, use
+bounded task-relevant navigation and avoid repeated refresh or network stress
+unless specifically requested.
+
+- `tools/automation/`: resident Dart MCP, embedded official server, shared Driver
+  connection, scoped capture/media, jobs and CLI broker. Current execution path;
+  `build.ps1` compiles once and subsequent calls reuse the service.
+- `references/mcp.md`: current API, editing loop, retries and ownership rules.
+
+The Python scripts below remain developer migration/regression tools. Do not
+select them as the normal runtime or require Python on a Flutter-only machine.
 
 - `scripts/lab.py` / `lab_cli.py`: public CLI and platform routing. Default remains
   Windows; Android requires `--platform android --device ACTUAL_SERIAL`.
@@ -67,11 +96,14 @@ Resolve paths from this skill directory. The working fixture stays under
   and host supervisor identity. Windows retains legacy session compatibility.
 - `scripts/windows_platform.py`, `window_capture.py`, `tools/window_capture/`:
   Windows lifecycle and independent native capture.
+- `scripts/windows_evidence.py`: observational foreground/focus evidence,
+  conditional background checks and restoration to the latest actual state.
 - `scripts/android_platform.py` / `android_device.py`: Android fixture sessions
   and scoped ADB display capture. Native system UI automation is separate.
 - `scripts/verify_windows.py`, `verify_scenarios.py`, `verify_android.py`: platform
   acceptance and reports; static checks do not establish runtime/visual coverage.
 
-Measured Windows results are in [docs/validation.md](docs/validation.md), and
-Android evidence in [docs/android-validation.md](docs/android-validation.md).
+Current Windows/Android measurements are in
+[docs/mcp-validation.md](docs/mcp-validation.md), with scope and historical
+boundaries in [docs/validation-status.md](docs/validation-status.md).
 Do not treat fixture evidence as verification of another application.

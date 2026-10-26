@@ -1,48 +1,87 @@
-# Public validation summary
+# Validation status
 
-This is a source-controlled summary of recorded results, not a replacement for
-original screenshots or a claim that the current checkout passed a new device
-run. Raw artifacts are local, ignored and not distributed with this repository.
-The repository preparation on 2026-10-20 does not rerun GUI/device acceptance.
+Updated 2026-10-27, Asia/Taipei. This page separates current local checks,
+recorded runtime acceptance and remaining limits. Raw images, recordings,
+service tokens and device identifiers remain in ignored local artifacts.
 
-| Area | Recorded evidence | Scope and limits |
+## Current local checks
+
+| Check | Result | Scope |
 | --- | --- | --- |
-| Repository checks | Passed on 2026-10-20 using the Python entrypoint, including an isolated source-copy check | Candidate source, metadata, Python syntax, local Markdown file links and limited secret patterns; existing ignored evidence links and a missing license were correctly rejected |
-| Python contracts | 33 tests passed on Windows via Python unittest, 2026-10-20 | Session ownership, process identity, CLI routing, stale output rejection, marker decoding and small real FFmpeg encodes; no app/device runtime |
-| Flutter analysis / headless tests | Analysis clean and 9 tests passed again during repository preparation, 2026-10-20 | Flutter 3.47.6 / Dart 3.13.5 on Windows; framework/widget behavior, not native presentation |
-| Workflow configuration | actionlint 1.7.7 passed on 2026-10-20 | Local GitHub Actions syntax/expression checks; not remote job execution |
-| Windows runtime | Latest documented regression: `verify`, 77 checks passed; 2026-10-20 Android review notes record the rerun | Fixture on the recorded local Windows environment; no guarantee for another app, host or display-off desktop |
-| Windows cold launches | 2026-10-19: three launches, 12 page capture pairs, stale-token rejection and never-presented timeout passed | Historical scoped placement and presentation checks |
-| Android runtime / visual review | 2026-10-19: 28 assertions across all four required groups plus sampled visual inspection | Pixel_10_Pro_XL emulator, Android 17/API 37, SwiftShader, default Flutter Impeller OpenGLES; no physical phone coverage |
-| Android latest corrections | Unit-covered changes on 2026-10-20 | Output cleanup and capture-failure isolation have **not** been rerun on a device |
-| GitHub Actions | [Initial run](https://github.com/normalllll/flutter-ui-automation/actions/runs/39452515810/) passed Flutter analysis/headless tests and Windows native helper compilation | Both Windows Python jobs failed one raw-path string assertion; the local correction compares canonical paths and adds a normalization subcase. A remote run of the correction is pending |
+| Resident Dart MCP | Analysis clean; 35 tests passed on Windows | Protocol, cancellation, evidence isolation, readiness, lease ownership, attach conflicts and independent keyboard-group setup |
+| Compiled distribution | Passed without inherited `DART_ROOT` / `DART_SDK` | MCP initialization, merged tools, native-fps validation, compiled CLI reuse, EOF cleanup |
+| Broker lifetime | Passed | Authentication, shared service PID, duplicate rejection, shutdown and recovery after a forced service-only crash |
+| Python regression tools | 46 tests passed on Windows | Session/capture contracts, display-panel selection, foreground evidence and small real FFmpeg encodes; no app/device launch |
+| Flutter fixture | Analysis clean; 10 headless tests passed | Binding restoration, focus guard, layout, dialogs and widget behavior |
+| Repository | Source/metadata/document links and `git diff --check` passed | Excludes ignored build, media, session and lock files from published source |
+| CI configuration | YAML parsed; Linux/Windows matrix and compiled startup check configured | Remote execution of the current change is pending |
 
-The CI path-assertion correction passed all 33 tests locally on Windows with
-Python 3.12.14. The affected test also passed with a real Windows 8.3 directory
-alias. Its regular subcases include a redundant parent segment so normalization
-is exercised even on filesystems that do not provide short names. The original
-assertion was reproduced failing before the correction.
+The runtime checks used Flutter 3.47.8 / Dart 3.13.7. CI pins Flutter 3.47.6 /
+Dart 3.13.5 and now exercises the compiled startup check and Windows-only lease
+tests. These local results do not claim that the new remote jobs have run.
 
-The Android content recording retained 10 original 1344×2992 PNGs, sampled at
-2 fps, with a 5.000 s encoded duration and 5.011 s capture wall time. All ten
-decoded FFV1/BGRA frame hashes matched the source. The display recording was
-original lossy H.264 at 720×1280 for 11.919 s, with a centered 574×1280 content
-rectangle at x=73. Reduced video resolution and lossy fidelity are explicit.
+## Recorded resident-runtime acceptance
 
-## Known limits
+Windows and a physical USB Galaxy Fold were exercised on 2026-10-26–27 with the
+resident MCP. The retained evidence covers navigation, callbacks, Unicode,
+Android native IME/insets, lifecycle/rotation, app/native PNG comparison, exact
+presentation tokens, lossless app/Windows masters, source hot reload, restart,
+cancellation, service recovery and per-channel failure isolation.
 
-- Display-off Windows capture reliability has not been established by a
-  controlled comparison. Blank/stale native frames fail strict acceptance.
-- Android's latest capture error-handling changes need an authorized device run
-  before claiming current mobile runtime acceptance.
-- Physical phones, native permission dialogs, WebView automation and IME
-  composition/candidate selection are not established by the fixture results.
-- Sampled visual inspection does not establish per-frame rendering fidelity or
-  60 fps performance. CI and unit tests do not establish visual acceptance.
-- Claude Code discovery/runtime compatibility has only been inspected statically.
+BooruFlow was exercised through its dedicated Windows Debug harness and isolated
+Android Debug package. Its production app/data remained separate; source hot
+reload through the staging junction and restart preserved the native PID.
+The tests did not submit searches or repeatedly refresh network content.
 
-See [Windows history](validation.md), [Android history](android-validation.md) and
-[Claude compatibility](claude-compatibility.md). To reproduce runtime evidence,
-follow the [Windows](../references/usage.md) or
-[Android](../references/android.md) commands with appropriate authorization.
-Inspect retained original media before recording a visual acceptance result.
+Windows cold-start PNG pairs and presentation fences passed, followed by a
+separately accepted launch/stop correction. That earlier run is not relabeled as
+an entirely passing cold cycle. Android completed its full cold cycle. The later
+review changes have headless/compiled regression coverage; no new device or GUI
+run was performed for those changes. Full measurements and reproduction commands
+are in [resident MCP validation](mcp-validation.md).
+
+## Historical evidence retained in summary
+
+Older implementation journals have been consolidated here; their complete text
+remains in Git history. They are not instructions for the current runtime.
+
+| Date | Recorded result | Limit that remains relevant |
+| --- | --- | --- |
+| 2026-10-17 | An early Windows run passed app interactions/media but rejected blank or stale native captures; a later run passed 56 checks | API success and a title bar do not establish native content freshness. Early raw artifacts were subsequently removed |
+| 2026-10-19–20 | Legacy Windows `verify` passed 77 checks; three cold launches passed 12 page pairs and stale-token tests | Recorded host/fixture evidence, not a guarantee for another app or display-off desktop |
+| 2026-10-19 | Pixel emulator passed 28 Android runtime assertions and sampled visual inspection | Native encoder reduced a 1344×2992 display to 720×1280 with letterboxing; original screenrecord was lossy. These results predate later Python capture changes |
+| 2026-10-20 | [Previous remote CI](https://github.com/normalllll/flutter-ui-automation/actions/runs/39453400835) passed all four jobs | Predates the resident MCP and current foreground policy; it does not establish current CI status |
+
+Distinct historical measurements remain useful as bounded evidence:
+
+- Early native white frames and a 5-second Android capture encoded as 2 seconds
+  were incorrectly accepted by older automatic checks and rejected during visual
+  review. Those attempts are not counted as final acceptance.
+- Windows negative tests rejected 101 candidate frames for a never-presented
+  token without publishing a success PNG; a recording-start failure produced
+  diagnostics without an encoder/master. A 330-second display observation saw
+  only display-on samples and did not establish display-off behavior.
+- One Windows run verified all 320 source/master BGRA frame hashes: app page and
+  animation videos were 1898×1024, 8 s at 5 fps (40 frames each); native page and
+  animation videos were 1902×1071, 12 s / 144 frames and 8 s / 96 frames at 12 fps.
+- The emulator app capture retained 10 frames, 5.000 s encoded / 5.011 s acquired.
+  Its original native video was 11.919 s at 720×1280, with a centered 574×1280
+  content projection at x=73. Resolution reduction and lossy fidelity were explicit.
+
+## Acceptance boundaries
+
+- Windows foreground/focus and activation counts are observations with unknown
+  initiator. User inspection does not invalidate pixels. Background-only checks
+  are `not_assessed` if their uninterrupted background interval was not established.
+- Display-off Windows reliability remains unresolved. Both an integrated app and
+  the fixture produced blank native frames while displays were reportedly off;
+  later display-on captures passed. No controlled comparison established cause.
+  Strict tokens and original diagnostic frames remain required; automation does
+  not wake displays or change power policy.
+- CI and headless tests do not establish visual acceptance. Sampled video review
+  does not establish per-frame fidelity or 60 fps performance.
+- Native permission/OS dialogs, WebView automation and IME composition/candidate
+  selection require separate coverage. Android original screenrecord is lossy.
+- Claude Code discovery/runtime, macOS/iOS and SSH execution were not exercised.
+- Fixture evidence is not verification of an arbitrary application. Fresh
+  acceptance requires the actual authorized target and retained artifacts.

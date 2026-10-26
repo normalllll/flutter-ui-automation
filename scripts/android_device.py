@@ -53,6 +53,17 @@ def png_size(data):
     return width, height
 
 
+def default_display_id(display_dump):
+    """Resolve logical display 0 to its current physical panel, including folds."""
+    section = re.search(r'^\s*Display 0:\s*\n(.*?)(?=^\s*Display \d+:|\Z)',
+                        display_dump, re.MULTILINE | re.DOTALL)
+    if section:
+        panel = re.search(r'mPrimaryDisplayDevice=.*?\(local:(\d+)\)', section[1])
+        if panel:
+            return panel[1]
+    raise RuntimeError('Cannot resolve the physical panel for Android display 0; refusing ambiguous capture')
+
+
 def display_projection(source_width, source_height, video_width, video_height):
     """Android screenrecord's centered, aspect-preserving display projection."""
     if min(source_width, source_height, video_width, video_height) <= 0:
@@ -138,6 +149,9 @@ class AndroidDevice:
         if not self.resumed():
             raise RuntimeError(f'{self.package} is not resumed on {self.serial}; refusing device capture/input')
 
+    def display_id(self):
+        return default_display_id(self.command('shell', 'dumpsys', 'display').stdout)
+
     def process_identity(self):
         pids = self.command('shell', 'pidof', self.package, check=False).stdout.split()
         if not pids:
@@ -161,17 +175,25 @@ class AndroidDevice:
         try:
             while True:
                 self.require_target()
-                result = subprocess.run([adb_binary(), '-s', self.serial, 'exec-out', 'screencap', '-p'],
+                display_id = self.display_id()
+                # On multi-panel devices screencap writes its default-display warning
+                # to stdout before the PNG. Select the actual panel instead of
+                # stripping arbitrary bytes or silently capturing the wrong screen.
+                result = subprocess.run([adb_binary(), '-s', self.serial, 'exec-out', 'screencap', '-p', '-d', display_id],
                                         capture_output=True, timeout=20, creationflags=NO_WINDOW)
                 if result.returncode:
                     raise RuntimeError(result.stderr.decode(errors='replace'))
                 width, height = png_size(result.stdout)
                 candidate.write_bytes(result.stdout)  # binary, no PowerShell redirection
                 self.require_target()
+                if self.display_id() != display_id:
+                    candidate.replace(diagnostic)
+                    raise RuntimeError(f'Android display panel changed during screenshot; diagnostic: {diagnostic}')
                 if probe is None or marker_matches(candidate, probe):
                     candidate.replace(output)
                     return {'path': str(output), 'source': 'Android display', 'deviceId': self.serial,
                             'package': self.package, 'width': width, 'height': height,
+                            'displayId': display_id,
                             'presentationVerified': probe is not None, 'probeMatched': probe is not None,
                             'lossless': True, 'elapsedMs': round((time.monotonic() - started) * 1000)}
                 if time.monotonic() - started >= seconds:
@@ -220,7 +242,8 @@ class DeviceRecording:
         self.log = self.output.with_suffix('.screenrecord.log').open('wb')
         try:
             self.process = subprocess.Popen([adb_binary(), '-s', self.device.serial, 'shell',
-                                            'screenrecord', '--verbose', '--time-limit', str(self.seconds), self.remote],
+                                            'screenrecord', '--display-id', self.source_display['displayId'],
+                                            '--verbose', '--time-limit', str(self.seconds), self.remote],
                                            stdout=self.log, stderr=self.log, creationflags=NO_WINDOW)
             # Wait for this invocation's output, not an unrelated recorder process.
             wait_until(lambda: (self.process.poll(), self.device.command('shell', 'test', '-f', self.remote, check=False).returncode),
@@ -249,6 +272,8 @@ class DeviceRecording:
                 from media import inspect_video
                 notes = inspect_video(temporary)
                 source = getattr(self, 'source_display', notes)
+                if source.get('displayId') is not None and self.device.display_id() != source['displayId']:
+                    raise RuntimeError('Android display panel changed during recording')
                 projection = display_projection(source['width'], source['height'], notes['width'], notes['height'])
                 presentation = False
                 if self.probe:
@@ -276,6 +301,7 @@ class DeviceRecording:
                     'sourceIsLossy': True, 'losslessVerified': False,
                     'presentationVerified': presentation,
                     'displayProjection': projection,
+                    'displayId': source.get('displayId'),
                     'elapsedMs': round((time.monotonic() - self.started) * 1000),
                     'expectedMs': self.seconds * 1000}
         finally:

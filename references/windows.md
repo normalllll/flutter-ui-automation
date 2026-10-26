@@ -1,7 +1,8 @@
 # Windows workflow
 
 Read this for Windows-only window placement, native capture and background
-foreground simulation. Existing CLI commands remain compatible.
+foreground simulation. Use the [resident MCP](mcp.md) for new runs;
+the Python CLI remains a legacy regression interface.
 
 ## Defaults
 
@@ -19,6 +20,10 @@ foreground simulation. Existing CLI commands remain compatible.
   non-activation. Prefer an available secondary work area when appropriate;
   account for DPI, negative monitor coordinates and taskbars. Do not raise the
   target to capture it. Reuse the fixture's placement modes when testing it.
+- Users may bring the window forward to inspect it during a run. Never force it
+  back to the background. Foreground/focus samples and activation counts remain
+  observations, not capture-validity gates; they cannot identify the initiator.
+  Only run background-specific assertions when their conditions were observed.
 
 ## Workflow
 
@@ -34,7 +39,7 @@ foreground simulation. Existing CLI commands remain compatible.
    proof that the target page loaded. Before a screenshot, wait (bounded) for
    transient animations to finish; an unsynchronized tap returns after one
    frame, so a route transition or ripple can otherwise be captured midway.
-   The example's Driver CLI does this and reports `settled`; treat
+   The fixture capture hook does this and reports `settled`; treat
    `settled: false` as possibly showing motion.
 4. Choose the image source by purpose:
    - **App screenshot:** Flutter content/layers, excluding native title bars and
@@ -92,10 +97,13 @@ OS shortcuts, activation-dependent plugins or `GetForegroundWindow()` behavior.
 
 ## Included working example and tools
 
-Read [references/usage.md](usage.md) for commands, prerequisites and
-integration boundaries. The runnable fixture is `examples/capture_lab/`.
+Read [the MCP workflow](mcp.md) for current commands and
+[legacy usage](usage.md) for Python regression and independent capture commands.
+The runnable fixture is `examples/capture_lab/`.
 
-- `scripts/lab.py`: start/stop the example, internal interaction, app/window
+- `tools/automation/`: current resident MCP, shared Driver sessions and compiled
+  persistent CLI for interaction, app/native media and verification.
+- `scripts/lab.py`: legacy start/stop, internal interaction, app/window
   screenshots, app/window recordings and the end-to-end verification report.
 - `scripts/window_capture.py`: independent HWND + PID screenshot/recording CLI.
 - `scripts/media.py`: full-resolution FFV1/BGRA masters, source-frame hashes and
@@ -107,5 +115,5 @@ integration boundaries. The runnable fixture is `examples/capture_lab/`.
 
 Use absolute paths based on this skill's location; do not assume the current
 working directory is the example. Refer to the measured results in
-[docs/validation.md](../docs/validation.md), without treating those as verification
+[MCP validation](../docs/mcp-validation.md), without treating those as verification
 of a different application.

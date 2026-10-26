@@ -45,9 +45,16 @@ jobs:
         run: python -B -m unittest discover -s scripts -p "test_*.py" -v
 
   flutter:
-    name: Flutter analysis and headless tests
-    runs-on: ubuntu-24.04
+    name: Flutter analysis and headless tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
     env:
       CI: 'true'
       FLUTTER_SUPPRESS_ANALYTICS: 'true'
@@ -70,6 +77,22 @@ jobs:
       - name: Resolve fixture dependencies
         working-directory: examples/capture_lab
         run: flutter pub get
+      - name: Resolve resident Dart MCP dependencies
+        working-directory: tools/automation
+        run: dart pub get
+      - name: Check resident Dart MCP (no app or device)
+        working-directory: tools/automation
+        run: |
+          dart format --output=none --set-exit-if-changed bin lib test
+          dart analyze
+          dart test
+          mkdir -p build
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            dart compile exe bin/automation.dart -o build/automation.exe
+          else
+            dart compile exe bin/automation.dart -o build/automation
+          fi
+          dart run bin/check_startup.dart
       - name: Analyze fixture
         working-directory: examples/capture_lab
         run: flutter analyze --no-pub

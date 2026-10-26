@@ -1,0 +1,141 @@
+// BOORUFLOW_ANDROID_MCP_TEST_ONLY. Dedicated Debug entrypoint, never imported by main.
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:booruflow/app/bootstrap.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_driver/driver_extension.dart';
+
+import 'automation_binding.dart';
+import 'main.dart'
+    show AutomationHost, AutomationHostState, captureAutomationErrors;
+import 'profile_paths.dart';
+
+const _native = MethodChannel('booruflow/automation');
+
+class AndroidMcpBinding extends AutomationBinding {
+  AndroidMcpBinding(super.handler);
+  // ignore: invalid_use_of_visible_for_testing_member
+  FlutterDriverExtension? _androidDriver;
+
+  @override
+  void initServiceExtensions() {
+    super.initServiceExtensions();
+    // The existing HTTP/AOT binding intentionally has no mobile Driver. This
+    // separate Debug binding uses the SDK extension with native IME by default.
+    // ignore: invalid_use_of_visible_for_testing_member
+    final extension = _androidDriver = FlutterDriverExtension(
+      handler,
+      false,
+      false,
+    );
+    // ignore: invalid_use_of_visible_for_testing_member
+    registerServiceExtension(name: 'driver', callback: extension.call);
+  }
+
+  @override
+  void setPretendForeground(bool enabled) =>
+      throw UnsupportedError('Android preserves real lifecycle and focus');
+
+  @override
+  Future<void> enterText(String text) async {
+    final driver = _androidDriver;
+    if (driver == null) throw StateError('Android Debug Driver is not ready');
+    // ignore: invalid_use_of_visible_for_testing_member
+    final result = await driver.call({'command': 'enter_text', 'text': text});
+    if (result['isError'] == true) throw StateError('${result['response']}');
+  }
+}
+
+Future<void> main() async {
+  if (!kDebugMode || !Platform.isAndroid) {
+    throw StateError('BOORUFLOW_ANDROID_MCP_TEST_ONLY requires Android Debug');
+  }
+  final host = GlobalKey<AutomationHostState>();
+  Directory? profile;
+  Future<String> request(String? message) async {
+    if (message == null) throw ArgumentError('Driver request data is required');
+    final input = jsonDecode(message) as Map<String, Object?>;
+    final command = input['command'];
+    if (command == 'pretendForeground') {
+      throw UnsupportedError('Android does not simulate foreground');
+    }
+    if (command == 'orientation') {
+      await _native.invokeMethod<void>('orientation', input['value']);
+      return jsonEncode({'requestedOrientation': input['value']});
+    }
+    if (command == 'unfocus') {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return request(jsonEncode({'command': 'state'}));
+    }
+    final state = host.currentState;
+    if (state == null) {
+      if (command == 'state') return jsonEncode({'ready': false});
+      throw StateError('Application is not ready');
+    }
+    final response = await state.request(message);
+    final decoded = jsonDecode(response);
+    if (decoded is! Map<String, Object?>) return response;
+    final view = ui.PlatformDispatcher.instance.views.first;
+    if (command == 'state' || command == 'prepareCapture') {
+      final native = await _native.invokeMapMethod<String, Object?>('status');
+      if (native == null) {
+        if (command == 'state') return jsonEncode({'ready': false});
+        throw StateError('Native Flutter view is not ready');
+      }
+      decoded['native'] = native;
+    }
+    if (command == 'state') {
+      decoded['ready'] = true;
+      decoded['profile'] = profile?.path;
+      decoded['capabilities'] = {
+        'appScreenshot': true,
+        'presentationProbe': true,
+        'foregroundSimulation': false,
+        'orientation': true,
+        'nativeUiAutomation': false,
+      };
+      decoded['view'] = {
+        'width': view.physicalSize.width / view.devicePixelRatio,
+        'height': view.physicalSize.height / view.devicePixelRatio,
+        'pixelRatio': view.devicePixelRatio,
+        'keyboardInset': view.viewInsets.bottom / view.devicePixelRatio,
+      };
+    }
+    if (command == 'appScreenshot') {
+      final bottom = view.viewInsets.bottom > view.viewPadding.bottom
+          ? view.viewInsets.bottom
+          : view.viewPadding.bottom;
+      decoded['contentRect'] = {
+        'x': view.viewPadding.left.round(),
+        'y': view.viewPadding.top.round(),
+        'width':
+            ((decoded['width']! as num) -
+                    view.viewPadding.left -
+                    view.viewPadding.right)
+                .round(),
+        'height': ((decoded['height']! as num) - view.viewPadding.top - bottom)
+            .round(),
+      };
+    }
+    return jsonEncode(decoded);
+  }
+
+  AndroidMcpBinding(request);
+  final identity = await _native.invokeMapMethod<String, Object?>('identity');
+  if (identity == null ||
+      identity['package'] != 'io.github.normalllll.booruflow.automation') {
+    throw StateError('Use the isolated automation APK');
+  }
+  profile = Directory(
+    '${identity['filesPath']}/mcp-${identity['instanceToken']}',
+  );
+  AutomationPaths.install(profile);
+  captureAutomationErrors();
+  await bootstrap(
+    appBuilder: (app) => AutomationHost(key: host, child: app),
+  );
+}

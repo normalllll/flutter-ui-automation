@@ -1,5 +1,9 @@
 # Windows usage and integration
 
+For new tests, use the [resident Dart MCP](mcp.md). It reuses sessions and the
+official Flutter MCP in one server; Python is not required. The commands below
+describe the retained legacy regression route and its app integration details.
+
 For Android sessions and commands, read [android.md](android.md). The common
 CLI defaults to Windows for compatibility. Platform selection is explicit.
 
@@ -57,11 +61,18 @@ state is atomically replaced. `stop` uses Flutter's machine protocol to stop onl
 that app instance. `verify` restores foreground simulation but leaves the example
 running so it can be inspected; stop it when finished.
 
-`verify` requires a background, visible window. It writes a timestamped directory
+`verify` requires a visible window and starts it without activation. Users may
+bring it forward during verification. It writes a timestamped directory
 with assertions and state snapshots in `report.json`, app/window PNG pairs, a
 8-second app-content and 12-second native-window videos, lossless masters and contact sheets.
-It checks 144 native-video frames at 12 fps, meaningful decoded page changes
-and zero foreground samples during capture.
+It checks 144 native-video frames at 12 fps and meaningful decoded page changes.
+Foreground samples, focus and activation counts are retained as observations,
+not required to be zero. `foregroundPolicy` states that the initiator is unknown;
+`foregroundObservations` retains the raw sampled values. `foregroundChecks`
+records background-only counter checks as `not_assessed` when a foreground/focus
+change or missing activation history prevents establishing their preconditions.
+These entries do not invalidate unrelated captures. In `verify-cold`, foreground
+observations likewise remain separate from pixel/presentation acceptance.
 The window content area is also checked for non-blank pixels and the native
 backend must supply multiple fresh frames. Both recordings must match their
 timeline in wall-clock time (see [capture details](capture.md#timing-and-freshness)).
@@ -71,7 +82,10 @@ failure, including a presentation timeout or a recording that cannot start
 (for example while the display is off), is recorded with its diagnostics and the
 functional checks continue. The report separates `functionalPassed` and
 `nativeCapturePassed`; `passed` requires both, and an interrupted run passes
-neither. `verify` exits with code 1 when either group fails. Directories from
+neither. A real failure of the counter during an established background interval
+still fails its functional assertion; simulation restoration follows the latest
+actual lifecycle and view focus rather than assuming an unfocused window.
+`verify` exits with code 1 when either group fails. Directories from
 failed attempts are retained.
 
 Driver interactions (`tap`, `text`, `scroll`, `tap-at`, `wait`, `wait-absent`)
@@ -146,7 +160,8 @@ python scripts/window_capture.py screenshot --hwnd 123456 --pid 1234 --backend w
 logical rect; `-` reads it from stdin. Without a probe the CLI prints a warning
 and reports `presentationVerified: false`: the image may be blank or a stale
 earlier page, so inspect it before accepting it. An API success result alone is
-insufficient. Measured results are in `docs/validation.md`.
+insufficient. Current measurements and historical scope are in
+[validation status](../docs/validation-status.md).
 
 The C++ tool outputs a PNG or BGRA rawvideo stream. The Python wrapper pipes the
 stream to FFmpeg using inherited pipes, with no screen recorder UI or system
@@ -192,7 +207,7 @@ For Claude Code, install the complete package under
 `<project>/.claude/skills/flutter-ui-automation/`, then invoke
 `/flutter-ui-automation`. The root CLAUDE.md imports this repository's AGENTS.md.
 For the static compatibility scope, see
-[Claude Code compatibility](../docs/claude-compatibility.md).
+[agent installation](../README.md#agent-installation).
 
 ## Initial window placement
 

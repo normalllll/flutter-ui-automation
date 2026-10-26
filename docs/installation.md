@@ -1,22 +1,27 @@
 # Installation and prerequisites
 
+The current runtime is the [resident Dart MCP](../references/mcp.md). Build it
+once with `tools/automation/build.ps1`, using Dart already supplied by Flutter.
+Python is needed only for developer repository checks and legacy regression
+scripts; the resident Windows/Android workflow does not require it.
+
 ## Get the source
 
 ```powershell
 git clone https://github.com/normalllll/flutter-ui-automation.git
 cd flutter-ui-automation
-python -B scripts/check_repository.py
 ```
 
-The clone URL becomes usable once the source is pushed. Install or link the
-**entire directory** through your agent's skill mechanism. For Claude Code, use
+Install or link the **entire directory** through your agent's skill mechanism.
+For Claude Code, use
 `~/.claude/skills/flutter-ui-automation/` or the equivalent project directory.
 For Codex, install the complete directory as `flutter-ui-automation`, then invoke
 `$flutter-ui-automation`. Do not copy only `SKILL.md`.
 
 The root is a skill/tool repository; the Flutter project is
-`examples/capture_lab/`. The bundled lifecycle CLI manages this fixture. Integrate
+`examples/capture_lab/`. The resident MCP manages fixture sessions. Integrate
 another app using its existing Driver harness or the
+[MCP integration guide](../references/mcp.md#integrating-an-app),
 [Windows integration guide](../references/usage.md) and
 [Android guide](../references/android.md).
 
@@ -24,7 +29,8 @@ another app using its existing Driver harness or the
 
 | Component | Requirement / reference baseline |
 | --- | --- |
-| Python | 3.11+; standard library only; CI covers 3.11 and 3.13 on Windows |
+| Resident service | Dart 3.13+ from Flutter; `dart_mcp_server` 1.2.1 embedded in process |
+| Python (developer/legacy only) | 3.11+; standard library only; CI covers 3.11 and 3.13 on Windows |
 | Flutter / Dart | Reference and CI pin: Flutter 3.47.6 / Dart 3.13.5; fixture SDK constraint is `^3.13.5` |
 | FFmpeg / FFprobe | Both on PATH, with PNG, rawvideo, FFV1 and libx264 support; CI prints installed versions |
 | Windows capture | Windows 10 1903+ with WGC support and an accessible interactive desktop |
@@ -39,14 +45,13 @@ separate from Windows host support.
 Check prerequisites without launching an application:
 
 ```powershell
-python --version
 flutter --version
 ffmpeg -version
 ffprobe -version
 ```
 
-If Python is not on PATH, use its absolute executable path. Do not install another Python
-merely because the `python` alias is absent.
+Check `python --version` only when using the developer checks or legacy tools.
+If Python is not on PATH, use an existing Python 3.11+ executable's absolute path.
 
 ## Prepare the fixture
 
@@ -78,4 +83,4 @@ python -B -m unittest discover -s scripts -p "test_*.py" -v
 
 The complete Python suite runs on Windows and requires FFmpeg/FFprobe. These
 commands do not launch the fixture or connect to a device. Use Git to obtain
-the source. No MCP server is included.
+the source. The resident MCP is compiled separately as described above.

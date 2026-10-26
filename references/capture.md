@@ -1,5 +1,9 @@
 # Presentation synchronization and original pixels
 
+This guide describes the Windows fixture/native-helper capture contract shared
+by the resident MCP and retained Python tools. Android original screenrecord is
+lossy; its projection and media contract are described in [the MCP workflow](mcp.md).
+
 ## Separate rendering from presentation
 
 The old path saved the first successful native capture. That is not a
@@ -14,8 +18,8 @@ The fixture now exposes `prepareCapture` through its test entrypoint:
    advance a 24-bit sequence and paint it in a small 32-cell color strip above
    the Navigator, at the bottom right. The strip is explicit test instrumentation,
    absent from the normal entrypoint, painted only for the requested hold
-   (`holdMs`, 12 s for a screenshot, the recording length plus 15 s for a
-   recording), and outside the app-capture boundary, so app PNGs never contain
+   (`holdMs`, 12 s by default for a screenshot, extended by the recording caller),
+   and outside the app-capture boundary, so app PNGs never contain
    it. Native captures do; their metadata reports `probeRect` in image pixels.
 2. Return the strip's logical bounds, device pixel ratio, and actual HWND/PID.
 3. The native helper converts the bounds to physical client coordinates and
@@ -101,7 +105,7 @@ reliability while the display is off.
 
 ## Video fidelity
 
-Every recording produces:
+App-content and Windows native recordings produce:
 
 - `name.lossless.mkv`: FFV1 level 3, BGRA, at source dimensions, with no scaling,
   chroma subsampling or odd-size padding. This is the pixel-inspection master.
@@ -113,17 +117,22 @@ Every recording produces:
 - App recording additionally retains every original physical-resolution PNG.
   A native recording can be extracted from the lossless master into PNGs.
 
-Every output path is cleared before capture and a new file is published only
-on success (screenshots via an atomic rename), so a failed run never leaves an
-older image or video that looks current. A stale `*.failed-native.png` is
-removed as well.
+The resident MCP uses a new attempt directory for each capture. The retained
+Python wrapper clears reused output paths and publishes screenshots by atomic
+rename after acceptance. Failed attempts retain separate diagnostics so an older
+image or video cannot be mistaken for a successful current capture.
 
 ## Timing and freshness
 
 Container duration is fixed by the frame count, so it is not evidence of
-timing. Both recorders report wall-clock pacing: `elapsedMs`, `expectedMs`,
+acquisition pacing. The resident MCP reports app `acquisitionMs`, sample times
+and `timingPassed`; app acquisition and Android encoded duration use a 15%
+tolerance. Native helper timing and fresh-frame observations are retained
+separately. Inspect each channel's actual timing fields as well as its video.
+
+The retained Python Windows regression recorders report `elapsedMs`, `expectedMs`,
 `lateFrames` (frames emitted more than half an interval late) and `maxLagMs`.
-`verify` requires elapsed time within max(500 ms, 5%) of the expected length
+Their `verify` requires elapsed time within max(500 ms, 5%) of the expected length
 and at most 5% late frames. The native pacing clock starts once the first
 frame reaches FFmpeg, so encoder startup no longer causes an initial burst.
 
@@ -138,7 +147,9 @@ Example unscaled extract:
 ffmpeg -ss 1 -i artifacts/window.lossless.mkv -frames:v 1 artifacts/frame-original.png
 ```
 
-The fixture samples app capture at 5 fps and native capture at 12 fps. Pixel
+The resident defaults are app sampling at 5 fps on Windows and 2 fps on Android,
+and Windows native sampling at 12 fps. Windows `nativeFps` accepts only integers
+from 1 to 60, shared by the helper and encoder. Pixel
 fidelity does not establish 60 fps smoothness, absence of dropped render frames,
 or HDR/color-management fidelity. The helper currently uses 8-bit BGRA capture.
 For frame pacing/performance investigations, choose an appropriate sampling rate

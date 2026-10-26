@@ -7,6 +7,13 @@ content and personal paths from public reports.
 
 ## Development setup
 
+For `tools/automation/`, use Flutter's Dart 3.13+, then `dart pub get`,
+`dart format --output=none --set-exit-if-changed bin lib test`, `dart analyze` and
+`dart test`. Compile the executable, then run `dart run bin/check_startup.dart`
+to exercise the compiled MCP and CLI without an app or device. Python is not
+part of the resident runtime. Use the legacy checks below when their source or
+shared native/fixture contracts change.
+
 Clone the complete repository. Use Python 3.11+ and FFmpeg/FFprobe on PATH. Python
 tools have no third-party Python dependencies. Flutter work uses Flutter 3.47.6
 (Dart 3.13.5); run `flutter pub get` in `examples/capture_lab/` first. Windows

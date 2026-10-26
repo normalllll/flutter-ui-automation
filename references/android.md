@@ -1,5 +1,11 @@
 # Android device automation
 
+For new tests, use the [resident Dart MCP](mcp.md). It reuses an explicit-device
+session and supports real mobile lifecycle/IME, hot reload and hot restart.
+Python is not required on this route. The older commands below remain regression
+and integration references. Physical USB Fold validation is documented in the
+[resident-service results](../docs/mcp-validation.md).
+
 Read this for Android sessions, capture and acceptance. The working fixture is
 `examples/capture_lab/`, package `dev.flutter.flutter_capture_lab`. Its Android
 test entrypoint is `lib/android_driver_main.dart`; normal `lib/main.dart` does not
@@ -97,6 +103,14 @@ launch. Do not remove its lease while its supervisor is alive.
   rather than an app-only capture. Do not use a personal device outside the
   authorized scope.
 
+The device backend resolves logical display 0 to its current physical panel
+through `dumpsys display` and passes that ID explicitly to `screencap -d` and
+`screenrecord --display-id`. This avoids the stdout warning that corrupts the
+PNG stream on multi-panel Fold devices. Screenshot metadata retains `displayId`;
+a panel switch during acquisition fails only that capture and retains its
+diagnostic. Keep orientation and the physical panel fixed during a recording.
+An unresolved display mapping is an explicit prerequisite failure.
+
 Fixture device captures require a newly painted 32-cell presentation token.
 Logical marker coordinates are mapped through actual view origin and DPR to
 display pixels. Screenshots are decoded and checked; recording validates the
@@ -156,4 +170,6 @@ automation backend (for example a deliberately integrated Patrol harness).
 Inspect original screenshots and decoded video before claiming visual acceptance.
 `report.passed` covers the executable assertions; `visualInspection` remains
 pending until the images have actually been reviewed. Existing Windows evidence
-does not validate Android; see `docs/android-validation.md` for current evidence.
+does not validate Android; see [MCP validation](../docs/mcp-validation.md) for
+current evidence and [validation status](../docs/validation-status.md) for
+historical emulator boundaries.

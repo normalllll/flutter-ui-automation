@@ -42,6 +42,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## External dependencies
 
+The resident Dart service resolves `dart_mcp_server` 1.2.1 and `dart_mcp` 0.5.2
+(Dart project authors, BSD 3-clause), and `image` (Brendan Duncan, MIT), plus the
+Dart `async`, `crypto`, `ffi`, `path` and `stream_channel` packages. Their source
+and license files are provided by pub.dev dependencies, not vendored or modified
+here. Embedding uses the official server's public channel API. Retain the
+dependencies' license notices if distributing a compiled service binary.
+
 Flutter/Dart, Flutter SDK test/Driver packages, `flutter_lints`, Android/Windows
 SDKs, Gradle and FFmpeg/FFprobe are external prerequisites or resolved build
 dependencies. Their licenses remain with their respective upstream projects.

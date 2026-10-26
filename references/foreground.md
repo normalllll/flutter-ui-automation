@@ -41,11 +41,29 @@ raw platform lifecycle, effective lifecycle and effective view focus separately.
 The independent recording helper also samples actual foreground status per
 output video frame. Capture does not move windows or raise their Z-order.
 
+The user may activate the window to inspect it at any time. A nonzero activation
+count, focused state or foreground recording sample does not invalidate a PNG,
+video or batch, and does not by itself establish that automation stole focus.
+The verifiers retain these observations with unknown activation attribution.
+They do not send the window back or manipulate user focus. An observed focus
+change makes background-only counter checks `not_assessed`; it is not counted
+as a passing background test. The activation counter also catches an activation
+and return between the two endpoint snapshots. This is sampled evidence, not a
+continuous audit of every platform event.
+
+After simulation is disabled, the expected state is the latest actual lifecycle
+and view-focus event, including `resumed`/`focused` after user inspection. State
+snapshots expose `rawViewFocus` for the current view. With an older fixture that
+does not expose this field, focus restoration is explicitly not assessed until
+the test entrypoint is rebuilt; lifecycle restoration is still checked.
+
 ## What this establishes
 
 The verification counter advances only if `WidgetsBinding.lifecycleState` is
-`resumed`. The test establishes that it stops in real background state, advances
-with simulation enabled, then stops again on disable. It separately verifies
+`resumed`. When uninterrupted background intervals are established, the test
+checks that the counter stops in real background state and stops again after
+disabling simulation. It checks that it advances with simulation enabled.
+It separately verifies
 widget interactions, Unicode text input and a framework F6 key event.
 
 This is useful for lifecycle-gated widgets, focus-dependent Flutter paths and
@@ -81,4 +99,4 @@ Keep native failures explicit. Do not synthesize a window frame around an app
 screenshot or activate the window as a fallback. PrintWindow can block or fail
 for other apps, so it runs in a separate helper with a caller timeout. Re-evaluate
 compatibility in the deployment environment. The fixture's latest measured
-results are recorded separately in [validation](../docs/validation.md).
+results are recorded separately in [MCP validation](../docs/mcp-validation.md).

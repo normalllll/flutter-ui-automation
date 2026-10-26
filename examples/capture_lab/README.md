@@ -1,28 +1,36 @@
 # Capture Lab fixture
 
-Windows and Android test application for the Flutter UI Automation skill.
+Windows and Android reference application for the Flutter UI Automation skill.
+Use the [resident MCP workflow](../../references/mcp.md) for builds, persistent
+sessions, interactions, capture and verification.
 
 - Normal entrypoint: `lib/main.dart`; no Driver or foreground simulation.
-- Test entrypoint: `lib/driver_main.dart`; internal Driver controls and explicit
-  framework lifecycle/view-focus simulation.
-- `tool/driver.dart`: fixture interaction and screenshot CLI.
-- `tool/record_app.dart`: persistent Driver connection for app-content recording.
-- `test/`: state-restoration, focus-guard and component-interaction checks.
+- Windows test entrypoint: `lib/driver_main.dart`; internal Driver controls and
+  explicit framework lifecycle/view-focus simulation.
+- Android test entrypoint: `lib/android_driver_main.dart`; real mobile lifecycle,
+  native identity/geometry and explicit Driver text emulation for Unicode input.
+- `test/`: binding restoration, focus guard, adaptive layout and widget checks.
+- `tool/driver.dart` and `tool/record_app.dart`: retained Python regression
+  integration; the resident MCP connects directly through the embedded server.
 
-Use `scripts/lab.py` from the repository root for the managed example lifecycle,
-scoped capture and full verification. See `../../references/usage.md` and
-`../../docs/validation.md` for commands and measured limitations.
+From the repository root on Windows:
 
-Run `flutter pub get` here before the first build or launch. The reference SDK is
-Flutter 3.47.6 / Dart 3.13.5; see [installation](../../docs/installation.md) and
-the [public validation summary](../../docs/validation-status.md). Original project
-additions are [GPL-3.0-or-later](../../COPYRIGHT); Flutter-derived scaffolding
-retains its [upstream notice](../../THIRD_PARTY_NOTICES.md).
+```powershell
+./tools/automation/build.ps1 -FlutterRoot C:/path/to/flutter -Fixture windows
+# Use -Fixture android for an Android build.
+```
 
-## Android
+Prepare dependencies with `flutter pub get` here before building through another
+entrypoint. The reference/CI SDK is Flutter 3.47.6 / Dart 3.13.5; resident-runtime
+measurements also cover Flutter 3.47.8 / Dart 3.13.7. See
+[installation](../../docs/installation.md) and
+[current validation](../../docs/validation-status.md).
 
-Use `lib/android_driver_main.dart` for Android automation; `lib/main.dart` stays
-normal. The Android project uses package `dev.flutter.flutter_capture_lab`.
-See [Android commands](../../references/android.md) and
-[validation evidence](../../docs/android-validation.md). Narrow/short viewports
-use bottom navigation; native keyboards resize the content and hide navigation.
+Android uses package `dev.flutter.flutter_capture_lab` and an explicit device ID.
+Narrow/short viewports use bottom navigation; native keyboards resize content and
+hide navigation. Read [Android integration](../../references/android.md) before
+runtime checks. Builds, launches and capture retain the user's authorization.
+
+Original project additions are [GPL-3.0-or-later](../../COPYRIGHT);
+Flutter-derived scaffolding retains its
+[upstream notice](../../THIRD_PARTY_NOTICES.md).

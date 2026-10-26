@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flutter-ui-automation": {
+      "command": "C:\\path\\to\\flutter-ui-automation\\tools\\automation\\build\\automation.exe",
+      "args": ["--root", "C:\\path\\to\\flutter-ui-automation", "--flutter-root", "C:\\path\\to\\flutter"]
+    }
+  }
+}
