@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 470" width="960" height="470" role="img" aria-labelledby="title desc">
+  <title id="title">flutter-ui-automation architecture</title>
+  <desc id="desc">An AI agent talks to one resident Dart MCP process. It drives the Flutter app through Flutter Driver over the VM service, and collects two separate evidence channels: the app's own PNG and the pixels the operating system actually presented, verified by a per-request presentation probe. No host mouse, keyboard or window activation is used.</desc>
+  <style>
+    .bg { fill: #ffffff; }
+    .box { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.5; }
+    .inner { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.2; }
+    .clay { fill: rgba(217,119,87,.12); stroke: #d97757; stroke-width: 1.5; }
+    .sky { fill: rgba(84,197,248,.14); stroke: #2b9bd6; stroke-width: 1.5; }
+    .teal { fill: rgba(46,196,182,.14); stroke: #1f9e93; stroke-width: 1.5; }
+    .t { font: 600 15px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1f2328; }
+    .s { font: 400 12.5px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #59636e; }
+    .m { font: 500 11.5px ui-monospace, "Cascadia Mono", Consolas, monospace; fill: #59636e; }
+    .h { font: 700 11px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 1.4px; fill: #d97757; }
+    .line { stroke: #8c959f; stroke-width: 1.6; fill: none; }
+    .head { fill: #8c959f; }
+    .pink { fill: #ff8fb1; }
+    .aqua { fill: #38bdd8; }
+    .no { stroke: #cf222e; stroke-width: 1.4; fill: none; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .box { fill: #151b23; stroke: #3d444d; }
+      .inner { fill: #0d1117; stroke: #3d444d; }
+      .t { fill: #e6edf3; }
+      .s, .m { fill: #9198a1; }
+      .line { stroke: #6e7681; }
+      .head { fill: #6e7681; }
+      .no { stroke: #f85149; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="960" height="470" rx="14"/>
+
+  <!-- Agent -->
+  <rect class="clay" x="20" y="146" width="180" height="132" rx="12"/>
+  <text class="h" x="36" y="172">AGENT</text>
+  <text class="t" x="36" y="196">Claude Code</text>
+  <text class="t" x="36" y="216">Codex</text>
+  <text class="s" x="36" y="238">any MCP client</text>
+  <text class="s" x="36" y="258">or the thin CLI</text>
+
+  <path class="line" d="M200 212 H236" marker-end="url(#arrow)"/>
+  <text class="m" x="204" y="203">MCP</text>
+
+  <!-- Resident MCP -->
+  <rect class="box" x="240" y="40" width="300" height="350" rx="14"/>
+  <text class="h" x="260" y="68">ONE RESIDENT PROCESS</text>
+  <text class="t" x="260" y="90">Dart MCP · tools/automation</text>
+
+  <rect class="inner" x="260" y="106" width="260" height="56" rx="10"/>
+  <text class="t" x="276" y="130">Official Dart/Flutter MCP</text>
+  <text class="s" x="276" y="149">hot reload · widget tree · VM</text>
+
+  <rect class="inner" x="260" y="174" width="260" height="56" rx="10"/>
+  <text class="t" x="276" y="198">Sessions · jobs · leases</text>
+  <text class="s" x="276" y="217">alive across edits and calls</text>
+
+  <rect class="inner" x="260" y="242" width="260" height="56" rx="10"/>
+  <text class="t" x="276" y="266">Capture · media · verify</text>
+  <text class="s" x="276" y="285">compare · decode the probe</text>
+
+  <g transform="translate(262 318)">
+    <circle class="no" cx="9" cy="9" r="8"/>
+    <path class="no" d="M3.5 3.5 L14.5 14.5"/>
+  </g>
+  <text class="s" x="284" y="331">no host mouse or keyboard</text>
+  <g transform="translate(262 346)">
+    <circle class="no" cx="9" cy="9" r="8"/>
+    <path class="no" d="M3.5 3.5 L14.5 14.5"/>
+  </g>
+  <text class="s" x="284" y="359">no window activation</text>
+
+  <!-- App -->
+  <rect class="sky" x="620" y="40" width="316" height="150" rx="14"/>
+  <text class="h" x="640" y="68" style="fill:#2b9bd6">YOUR FLUTTER APP</text>
+  <text class="t" x="640" y="92">Debug test entrypoint</text>
+  <text class="s" x="640" y="112">Driver extension + hooks</text>
+  <text class="s" x="640" y="130">release entrypoint untouched</text>
+  <g transform="translate(844 108)">
+    <rect class="inner" x="-8" y="-8" width="96" height="62" rx="8"/>
+    <g>
+      <rect class="pink" x="0" y="0" width="8" height="8" rx="2"/><rect class="aqua" x="10" y="0" width="8" height="8" rx="2"/><rect class="pink" x="20" y="0" width="8" height="8" rx="2"/><rect class="aqua" x="30" y="0" width="8" height="8" rx="2"/><rect class="aqua" x="40" y="0" width="8" height="8" rx="2"/><rect class="aqua" x="50" y="0" width="8" height="8" rx="2"/><rect class="aqua" x="60" y="0" width="8" height="8" rx="2"/><rect class="aqua" x="70" y="0" width="8" height="8" rx="2"/>
+      <rect class="aqua" x="0" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="10" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="20" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="30" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="40" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="50" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="60" y="10" width="8" height="8" rx="2"/><rect class="aqua" x="70" y="10" width="8" height="8" rx="2"/>
+      <rect class="aqua" x="0" y="20" width="8" height="8" rx="2"/><rect class="aqua" x="10" y="20" width="8" height="8" rx="2"/><rect class="aqua" x="20" y="20" width="8" height="8" rx="2"/><rect class="aqua" x="30" y="20" width="8" height="8" rx="2"/><rect class="aqua" x="40" y="20" width="8" height="8" rx="2"/><rect class="pink" x="50" y="20" width="8" height="8" rx="2"/><rect class="pink" x="60" y="20" width="8" height="8" rx="2"/><rect class="pink" x="70" y="20" width="8" height="8" rx="2"/>
+      <rect class="pink" x="0" y="30" width="8" height="8" rx="2"/><rect class="aqua" x="10" y="30" width="8" height="8" rx="2"/><rect class="pink" x="20" y="30" width="8" height="8" rx="2"/><rect class="pink" x="30" y="30" width="8" height="8" rx="2"/><rect class="aqua" x="40" y="30" width="8" height="8" rx="2"/><rect class="pink" x="50" y="30" width="8" height="8" rx="2"/><rect class="aqua" x="60" y="30" width="8" height="8" rx="2"/><rect class="pink" x="70" y="30" width="8" height="8" rx="2"/>
+    </g>
+    <text class="m" x="4" y="50">#00007b</text>
+  </g>
+
+  <!-- OS -->
+  <rect class="teal" x="620" y="246" width="316" height="144" rx="14"/>
+  <text class="h" x="640" y="274" style="fill:#1f9e93">OS / DEVICE</text>
+  <text class="t" x="640" y="298">Presented pixels</text>
+  <text class="m" x="640" y="320">Windows  WGC · PrintWindow</text>
+  <text class="m" x="640" y="338">Android  adb screencap · record</text>
+  <text class="m" x="640" y="356">Linux    X11 window capture</text>
+  <text class="m" x="640" y="374">Apple    SCKit · simctl</text>
+
+  <!-- Arrows -->
+  <path class="line" d="M520 134 H616" marker-end="url(#arrow)"/>
+  <text class="m" x="548" y="125">Driver</text>
+  <text class="m" x="548" y="150">VM service</text>
+
+  <path class="line" d="M620 170 C 580 170, 570 262, 524 262" marker-end="url(#arrow)"/>
+  <text class="m" x="578" y="236">app PNG</text>
+
+  <path class="line" d="M620 318 C 580 318, 570 282, 524 282" marker-end="url(#arrow)"/>
+  <text class="m" x="514" y="352">system pixels</text>
+
+  <path class="line" d="M778 190 V242" marker-end="url(#arrow)"/>
+  <text class="s" x="788" y="222">presents frames</text>
+
+  <!-- Footer -->
+  <text class="s" x="24" y="420">Two evidence channels stay separate: the app's own PNG, and system pixels</text>
+  <text class="s" x="24" y="440">accepted only when the per-request probe token is decoded in them.</text>
+</svg>

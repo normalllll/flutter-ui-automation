@@ -2,6 +2,9 @@
 
 ## 0.2.0 — unreleased
 
+- Rewrite the README as an introduction with an architecture diagram, add a
+  Simplified Chinese README, and move the step-by-step walkthrough to
+  `docs/quickstart.md`.
 - Remove an app-specific Debug harness and the executable launch path; other
   apps attach to their own Debug test entrypoint.
 - Replace the 32-cell presentation strip with an 8×4 pink/aqua dot matrix.

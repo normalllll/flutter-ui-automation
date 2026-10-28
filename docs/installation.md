@@ -74,8 +74,8 @@ and dependency or SDK updates rerun the
 affected analysis, build and behavioral checks.
 
 After obtaining authorization for the relevant build and runtime operations, use
-the [Windows quick start](../README.md#windows-quick-start) or
-[Android quick start](../README.md#android-quick-start). Tool installation does
+the [Windows quick start](quickstart.md#windows) or
+[Android quick start](quickstart.md#android). Tool installation does
 not grant permission to launch or capture an app.
 Linux and Apple preparation, execution limits and remote setup are described in
 [Linux](../references/linux.md), [Apple](../references/apple.md) and
