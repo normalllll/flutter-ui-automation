@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022]
+        os: [ubuntu-24.04, windows-2022, macos-latest]
     defaults:
       run:
         shell: bash
@@ -69,18 +69,18 @@ jobs:
         run: |
           echo "$GITHUB_WORKSPACE/.cache/flutter/bin" >> "$GITHUB_PATH"
           .cache/flutter/bin/flutter --version
-      - name: Prepare FFmpeg for Dart media tests
+      - name: Prepare FFmpeg and native build tools
         timeout-minutes: 5
         run: |
-          if ! command -v ffmpeg || ! command -v ffprobe; then
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60)
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" update
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install --yes --no-install-recommends ffmpeg clang cmake ninja-build pkg-config libgtk-3-dev libx11-dev libpng-dev libgl1-mesa-dri xvfb xauth fonts-noto-cjk fonts-noto-color-emoji
+          elif ! command -v ffmpeg || ! command -v ffprobe; then
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               choco install ffmpeg --yes --no-progress
             else
-              # Hosted images have extra apt sources. Bound unreachable mirrors
-              # and keep package/service configuration noninteractive in CI.
-              apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60)
-              sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" update
-              sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install --yes --no-install-recommends ffmpeg
+              HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ffmpeg
             fi
           fi
           ffmpeg -version
@@ -110,6 +110,18 @@ jobs:
       - name: Test fixture (headless)
         working-directory: examples/capture_lab
         run: flutter test --no-pub
+      - name: Build Linux fixture and scoped capture helper
+        if: runner.os == 'Linux'
+        run: bash tools/automation/build.sh linux
+      - name: Verify Linux desktop on a dedicated virtual display
+        if: runner.os == 'Linux'
+        working-directory: tools/automation
+        run: xvfb-run -a -s '-screen 0 1600x1000x24' env GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1 dart run bin/check_platform.dart linux
+      - name: Build Apple fixtures and capture helper
+        if: runner.os == 'macOS'
+        run: |
+          bash tools/automation/build.sh macos
+          bash tools/automation/build.sh ios
 
   native:
     name: Compile Windows capture helper

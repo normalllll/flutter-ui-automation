@@ -7,6 +7,9 @@
 **/.idea/
 **/.flutter-plugins-dependencies
 **/windows/flutter/ephemeral/
+**/linux/flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/Pods/
 **/__pycache__/
 *.pyc
 *.iml
