@@ -30,8 +30,10 @@ class DriverBinding extends WidgetsFlutterBinding
   void initServiceExtensions() {
     super.initServiceExtensions();
     // Same test-only extension API as the SDK's standard Driver binding.
+    // Text entry emulation starts disabled so the real platform text input is
+    // the baseline; the controller enables it explicitly and restores it.
     // ignore: invalid_use_of_visible_for_testing_member
-    final extension = FlutterDriverExtension(handler, false, true);
+    final extension = FlutterDriverExtension(handler, false, false);
     // ignore: invalid_use_of_visible_for_testing_member
     registerServiceExtension(name: 'driver', callback: extension.call);
   }

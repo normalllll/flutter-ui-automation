@@ -1,5 +1,5 @@
 name: flutter_capture_lab
-description: Windows and Android Flutter automation and dual-channel capture verification.
+description: Cross-platform Flutter automation and dual-channel capture verification fixture.
 publish_to: none
 version: 1.0.0+1
 environment:

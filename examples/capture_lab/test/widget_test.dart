@@ -36,6 +36,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('nav-scenarios')));
       await tester.pump();
       await tester.ensureVisible(find.byKey(const ValueKey('open-dialog')));
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('open-dialog')));
       await tester.pump(const Duration(milliseconds: 350));
       expect(find.byKey(const ValueKey('confirmation-dialog')), findsOneWidget);

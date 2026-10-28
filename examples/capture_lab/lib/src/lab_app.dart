@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart'
 
 import 'automation_binding.dart';
 import 'driver_binding.dart';
+import 'lab_style.dart';
 
 const native = MethodChannel('capture_lab/native');
 
@@ -27,9 +29,12 @@ class CaptureLabState extends State<CaptureLab>
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final AnimationController _animation;
   int _probe = 0;
-  // The marker is instrumentation: shown only while a native capture may be
-  // waiting for it, so ordinary UI is not covered between captures.
-  DateTime? _probeVisibleUntil;
+  // The marker is instrumentation: shown only while a native capture holds
+  // it, so ordinary UI is not covered between captures. Each prepareCapture
+  // opens a hold that the controller releases when its capture ends; every
+  // hold also expires on its own, so a lost controller cannot strand it.
+  final _holds = <int, DateTime>{};
+  int _holdSequence = 0;
   Timer? _probeHide;
   int _animationFrames = 0;
   int _dialogConfirmed = 0;
@@ -126,7 +131,7 @@ class CaptureLabState extends State<CaptureLab>
         'presentationProbe': _automation != null,
         'foregroundSimulation': _automation is AutomationBinding,
         'nativeUiAutomation': false,
-        'orientation': _os['platform'] == 'android',
+        'orientation': ['android', 'ios'].contains(_os['platform']),
       },
       'lifecycleEvents': List<String>.of(_lifecycleEvents),
       'view': {
@@ -190,6 +195,18 @@ class CaptureLabState extends State<CaptureLab>
     };
   }
 
+  void _scheduleProbeExpiry() {
+    _probeHide?.cancel();
+    if (_holds.isEmpty) return;
+    final next = _holds.values.reduce((a, b) => a.isBefore(b) ? a : b);
+    _probeHide = Timer(next.difference(DateTime.now()), () {
+      if (!mounted) return;
+      final now = DateTime.now();
+      setState(() => _holds.removeWhere((_, until) => !until.isAfter(now)));
+      _scheduleProbeExpiry();
+    });
+  }
+
   Duration _timeout(Map<String, Object?> request) =>
       Duration(milliseconds: (request['settleMs'] as num?)?.toInt() ?? 3000);
 
@@ -210,13 +227,20 @@ class CaptureLabState extends State<CaptureLab>
         FocusManager.instance.primaryFocus?.unfocus();
         return jsonEncode(await snapshot());
       case 'orientation':
-        if (_os['platform'] != 'android' || _automation == null) {
+        if (!['android', 'ios'].contains(_os['platform']) ||
+            _automation == null) {
           throw UnsupportedError(
-            'Orientation hook requires the Android test entrypoint',
+            'Orientation hook requires a mobile test entrypoint',
           );
         }
-        await native.invokeMethod<void>('orientation', request['value']);
-        return jsonEncode({'requestedOrientation': request['value']});
+        final restored = await native.invokeMapMethod<String, Object?>(
+          'orientation',
+          request['value'],
+        );
+        return jsonEncode({
+          'requestedOrientation': request['value'],
+          ...?restored,
+        });
       case 'prepareCapture':
         // A per-request visible marker is a presentation fence, not a delay.
         // It lets the external HWND backend reject blank and stale frames.
@@ -226,20 +250,15 @@ class CaptureLabState extends State<CaptureLab>
         final hold = Duration(
           milliseconds: (request['holdMs'] as num?)?.toInt() ?? 12000,
         );
-        final until = DateTime.now().add(hold);
-        // A concurrent screenshot must not shorten a running recording's hold.
-        final visibleUntil =
-            _probeVisibleUntil != null && _probeVisibleUntil!.isAfter(until)
-            ? _probeVisibleUntil!
-            : until;
+        final visibleUntil = DateTime.now().add(hold);
+        // Holds are independent: a concurrent screenshot's release never
+        // hides the probe a running recording still needs.
+        final holdId = ++_holdSequence;
         setState(() {
           _probe = (_probe + 1) & 0xffffff;
-          _probeVisibleUntil = visibleUntil;
+          _holds[holdId] = visibleUntil;
         });
-        _probeHide?.cancel();
-        _probeHide = Timer(visibleUntil.difference(DateTime.now()), () {
-          if (mounted) setState(() => _probeVisibleUntil = null);
-        });
+        _scheduleProbeExpiry();
         WidgetsBinding.instance.scheduleForcedFrame();
         await WidgetsBinding.instance.endOfFrame.timeout(
           const Duration(seconds: 3),
@@ -247,11 +266,21 @@ class CaptureLabState extends State<CaptureLab>
         return jsonEncode({
           ...?settle,
           'token': _probe,
+          'hold': holdId,
           'visibleUntilMs': visibleUntil.millisecondsSinceEpoch,
           'rect': _rect(_probeKey),
           'pixelRatio':
               ui.PlatformDispatcher.instance.views.first.devicePixelRatio,
           'native': (await snapshot())['native'],
+        });
+      case 'releaseCapture':
+        final hold = request['hold'];
+        if (hold is! int) throw ArgumentError('hold must be an integer');
+        if (_holds.containsKey(hold)) setState(() => _holds.remove(hold));
+        _scheduleProbeExpiry();
+        return jsonEncode({
+          'released': hold,
+          'probeVisible': _holds.isNotEmpty,
         });
       case 'appScreenshot':
         // Hidden lifecycle disables normal frames. Force a capture frame
@@ -348,46 +377,26 @@ class CaptureLabState extends State<CaptureLab>
     builder: (context, child) => Stack(
       children: [
         Positioned.fill(
-          child: RepaintBoundary(key: _captureKey, child: child!),
+          child: RepaintBoundary(
+            key: _captureKey,
+            child: LabBackdrop(child: child!),
+          ),
         ),
-        if (_automation != null && _probeVisibleUntil != null)
+        // Top-right: the page header leaves this corner empty on desktop and
+        // mobile, so the probe does not cover navigation or page content.
+        if (_automation != null && _holds.isNotEmpty)
           Positioned(
-            right: 8,
-            bottom:
-                8 +
-                MediaQuery.of(context).viewPadding.bottom +
-                MediaQuery.of(context).viewInsets.bottom,
+            right: 8 + MediaQuery.of(context).viewPadding.right,
+            top: 8 + MediaQuery.of(context).viewPadding.top,
             child: IgnorePointer(
-              child: SizedBox(
-                key: _probeKey,
-                width: 128,
-                height: 8,
-                child: Row(
-                  children: List.generate(32, (index) {
-                    final word = (0xa << 28) | (_probe << 4) | 0x5;
-                    return Expanded(
-                      child: ColoredBox(
-                        color: (word >> (31 - index)) & 1 == 1
-                            ? const Color(0xfff0b429)
-                            : const Color(0xff16324f),
-                        child: const SizedBox.expand(),
-                      ),
-                    );
-                  }),
-                ),
-              ),
+              child: LabProbe(bitsKey: _probeKey, token: _probe),
             ),
           ),
       ],
     ),
     debugShowCheckedModeBanner: false,
     title: 'Flutter Capture Lab',
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff2563eb)),
-      scaffoldBackgroundColor: const Color(0xfff5f7fb),
-      fontFamily: 'Segoe UI',
-      cardTheme: const CardThemeData(elevation: 0, margin: EdgeInsets.zero),
-    ),
+    theme: Lab.theme(),
     home: LayoutBuilder(
       builder: (context, constraints) =>
           constraints.maxWidth < 760 || constraints.maxHeight < 500
@@ -396,111 +405,264 @@ class CaptureLabState extends State<CaptureLab>
     ),
   );
 
-  Widget _desktop() => Scaffold(
-    body: Row(
-      children: [
-        NavigationRail(
-          extended: true,
-          minExtendedWidth: 190,
-          backgroundColor: Colors.white,
-          leading: const Padding(
-            padding: EdgeInsets.fromLTRB(16, 24, 16, 32),
+  static const _titles = [
+    'Automation overview',
+    'Capture gallery',
+    'Interaction bench',
+    'Dialogs and animation',
+  ];
+  static const _subtitles = [
+    'Visible window. Internal input. Independent capture.',
+    'Stable keys, real scrolling and pixel-addressable tiles.',
+    'Framework text, pointer and keyboard paths.',
+    'Modal routes and a controlled animation stage.',
+  ];
+  static const _destinations = [
+    (Icons.dashboard_outlined, 'Overview', 'Overview', 'nav-overview'),
+    (Icons.grid_view_rounded, 'Gallery', 'Gallery', 'nav-gallery'),
+    (Icons.touch_app_outlined, 'Interaction', 'Input', 'nav-interaction'),
+    (
+      Icons.play_circle_outline,
+      'Dialogs & motion',
+      'Scenarios',
+      'nav-scenarios',
+    ),
+  ];
+
+  // The Windows runner does not report a platform name; use the host's.
+  String get _platformName =>
+      '${_os['platform'] ?? defaultTargetPlatform.name}';
+
+  // Keyed per page: the pages share a tree position, and without a key one
+  // page's scroll position would be reused by the next.
+  Widget _pageBody() => KeyedSubtree(
+    key: ValueKey('page-$_page'),
+    child: switch (_page) {
+      0 => _overview(),
+      1 => _gallery(),
+      2 => _interactions(),
+      _ => _scenarios(),
+    },
+  );
+
+  List<LabReadout> _readouts({bool compact = false}) {
+    final foreground = _os['isForeground'];
+    final lifecycle = WidgetsBinding.instance.lifecycleState?.name ?? 'unknown';
+    return [
+      LabReadout(
+        label: '$_platformName foreground',
+        value: '${foreground ?? '?'}',
+        led: foreground == true ? Lab.ok : Lab.off,
+        compact: compact,
+      ),
+      LabReadout(
+        label: 'Flutter',
+        value: lifecycle,
+        led: lifecycle == 'resumed' ? Lab.ok : Lab.clay,
+        compact: compact,
+      ),
+      LabReadout(
+        label: 'View focus',
+        value: _viewFocus.name,
+        led: _viewFocus == ui.ViewFocusState.focused ? Lab.sky : Lab.off,
+        compact: compact,
+      ),
+      LabReadout(
+        label: 'Heartbeat',
+        value: '$_ticks',
+        led: Lab.clay,
+        compact: compact,
+      ),
+    ];
+  }
+
+  Widget _brandMark(double size) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(size * .3),
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xfff0a07f), Lab.clay],
+      ),
+      boxShadow: const [BoxShadow(color: Color(0x66d97757), blurRadius: 18)],
+    ),
+    child: Icon(
+      Icons.science_outlined,
+      size: size * .55,
+      color: const Color(0xff1b0d07),
+    ),
+  );
+
+  Widget _navItem(int index) {
+    final (icon, label, _, key) = _destinations[index];
+    final selected = _page == index;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: ValueKey(key),
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => setState(() => _page = index),
+          child: Container(
+            height: 46,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: selected ? Lab.clay.withValues(alpha: .14) : null,
+              border: Border.all(
+                color: selected
+                    ? Lab.clay.withValues(alpha: .38)
+                    : Colors.transparent,
+              ),
+            ),
             child: Row(
               children: [
-                Icon(Icons.science_outlined),
-                SizedBox(width: 12),
-                Text(
-                  'CAPTURE LAB',
-                  style: TextStyle(fontWeight: FontWeight.w800),
+                Icon(icon, size: 20, color: selected ? Lab.clay : Lab.muted),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? Lab.text : Lab.muted,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
-          selectedIndex: _page,
-          onDestinationSelected: (value) => setState(() => _page = value),
-          destinations: const [
-            NavigationRailDestination(
-              icon: Icon(
-                Icons.dashboard_outlined,
-                key: ValueKey('nav-overview'),
-              ),
-              label: Text('Overview'),
-            ),
-            NavigationRailDestination(
-              icon: Icon(Icons.grid_view, key: ValueKey('nav-gallery')),
-              label: Text('Gallery'),
-            ),
-            NavigationRailDestination(
-              icon: Icon(
-                Icons.touch_app_outlined,
-                key: ValueKey('nav-interaction'),
-              ),
-              label: Text('Interaction'),
-            ),
-            NavigationRailDestination(
-              icon: Icon(
-                Icons.play_circle_outline,
-                key: ValueKey('nav-scenarios'),
-              ),
-              label: Text('Dialogs & motion'),
-            ),
-          ],
         ),
-        const VerticalDivider(width: 1),
+      ),
+    );
+  }
+
+  Widget _sidebar() => Container(
+    width: 240,
+    decoration: const BoxDecoration(
+      color: Color(0xb30a0e17),
+      border: Border(right: BorderSide(color: Lab.line)),
+    ),
+    padding: const EdgeInsets.fromLTRB(16, 28, 16, 20),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Row(
+            children: [
+              _brandMark(40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'CAPTURE LAB',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.2,
+                        color: Lab.text,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'flutter ui automation',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Lab.monoStyle(size: 11, color: Lab.muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 36),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text('WORKSPACE', style: Lab.eyebrow()),
+        ),
+        const SizedBox(height: 10),
+        for (var i = 0; i < _destinations.length; i++) _navItem(i),
+        const Spacer(),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0x99141b29),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Lab.line),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('TARGET', style: Lab.eyebrow()),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const LabLed(Lab.ok, size: 7),
+                  const SizedBox(width: 8),
+                  Text(
+                    _platformName,
+                    style: Lab.monoStyle(size: 14, weight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'pid ${_os['pid'] ?? '-'}',
+                style: Lab.monoStyle(size: 12, color: Lab.muted),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _desktop() => Scaffold(
+    body: Row(
+      children: [
+        _sidebar(),
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.fromLTRB(36, 30, 36, 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  [
-                    'Automation overview',
-                    'Capture gallery',
-                    'Interaction bench',
-                    'Dialogs and animation',
-                  ][_page],
-                  key: const ValueKey('page-title'),
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  'CAPTURE LAB / ${_destinations[_page].$2.toUpperCase()}',
+                  style: Lab.eyebrow(Lab.clay),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Visible window. Internal input. Independent capture.',
-                  style: TextStyle(color: Color(0xff475569)),
+                Text(
+                  _titles[_page],
+                  key: const ValueKey('page-title'),
+                  style: const TextStyle(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -.6,
+                    color: Lab.text,
+                  ),
                 ),
-                const SizedBox(height: 20),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    Chip(
-                      label: Text(
-                        'Windows foreground: ${_os['isForeground'] ?? '?'}',
-                      ),
-                    ),
-                    Chip(
-                      label: Text(
-                        'Flutter: ${WidgetsBinding.instance.lifecycleState?.name ?? 'unknown'}',
-                      ),
-                    ),
-                    Chip(label: Text('View focus: ${_viewFocus.name}')),
-                    Chip(label: Text('Heartbeat: $_ticks')),
-                  ],
+                const SizedBox(height: 6),
+                Text(
+                  _subtitles[_page],
+                  style: const TextStyle(fontSize: 15, color: Lab.muted),
                 ),
-                const SizedBox(height: 20),
-                Expanded(
-                  child: switch (_page) {
-                    0 => _overview(),
-                    1 => _gallery(),
-                    2 => _interactions(),
-                    _ => _scenarios(),
-                  },
-                ),
+                const SizedBox(height: 22),
+                Wrap(spacing: 12, runSpacing: 12, children: _readouts()),
+                const SizedBox(height: 24),
+                Expanded(child: _pageBody()),
                 if (_error case final error?)
-                  Text(error, style: const TextStyle(color: Colors.red)),
+                  Text(error, style: const TextStyle(color: Lab.clay)),
               ],
             ),
           ),
@@ -509,64 +671,86 @@ class CaptureLabState extends State<CaptureLab>
     ),
   );
 
-  Widget _mobile(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: Text(
-        [
-          'Automation overview',
-          'Capture gallery',
-          'Interaction bench',
-          'Dialogs and animation',
-        ][_page],
-        key: const ValueKey('page-title'),
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-      ),
-    ),
-    body: SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: switch (_page) {
-          0 => _overview(),
-          1 => _gallery(),
-          2 => _interactions(),
-          _ => _scenarios(),
-        },
-      ),
-    ),
-    bottomNavigationBar: MediaQuery.of(context).viewInsets.bottom > 0
-        ? null
-        : NavigationBar(
-            selectedIndex: _page,
-            onDestinationSelected: (value) => setState(() => _page = value),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(
-                  Icons.dashboard_outlined,
-                  key: ValueKey('nav-overview'),
+  Widget _mobile(BuildContext context) {
+    final typing = MediaQuery.of(context).viewInsets.bottom > 0;
+    final readouts = _readouts(compact: true);
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+              child: Row(
+                children: [
+                  _brandMark(32),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'CAPTURE LAB / $_platformName'.toUpperCase(),
+                          style: Lab.eyebrow(Lab.clay),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _titles[_page],
+                          key: const ValueKey('page-title'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.w700,
+                            color: Lab.text,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // The keyboard leaves little height; keep the editor visible.
+            if (!typing) ...[
+              SizedBox(
+                height: 62,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: readouts.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (_, index) => readouts[index],
                 ),
-                label: 'Overview',
               ),
-              NavigationDestination(
-                icon: Icon(Icons.grid_view, key: ValueKey('nav-gallery')),
-                label: 'Gallery',
-              ),
-              NavigationDestination(
-                icon: Icon(
-                  Icons.touch_app_outlined,
-                  key: ValueKey('nav-interaction'),
-                ),
-                label: 'Input',
-              ),
-              NavigationDestination(
-                icon: Icon(
-                  Icons.play_circle_outline,
-                  key: ValueKey('nav-scenarios'),
-                ),
-                label: 'Scenarios',
-              ),
+              const SizedBox(height: 10),
             ],
-          ),
-  );
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                child: _pageBody(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: typing
+          ? null
+          : NavigationBar(
+              selectedIndex: _page,
+              onDestinationSelected: (value) => setState(() => _page = value),
+              destinations: [
+                for (final (icon, _, label, key) in _destinations)
+                  NavigationDestination(
+                    icon: Icon(icon, key: ValueKey(key)),
+                    label: label,
+                  ),
+              ],
+            ),
+    );
+  }
 
   Map<String, double>? _rect(GlobalKey key) {
     final box = key.currentContext?.findRenderObject();
@@ -587,10 +771,20 @@ class CaptureLabState extends State<CaptureLab>
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         key: const ValueKey('confirmation-dialog'),
-        title: const Text('Confirm sample action'),
+        icon: const Icon(Icons.verified_outlined, color: Lab.clay, size: 30),
+        title: const Text(
+          'Confirm sample action',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: Lab.text,
+          ),
+        ),
         content: const Text(
           'This Flutter dialog is controlled through internal pointer events.',
+          style: TextStyle(fontSize: 14.5, color: Lab.muted),
         ),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
         actions: [
           TextButton(
             key: const ValueKey('dialog-cancel'),
@@ -613,94 +807,318 @@ class CaptureLabState extends State<CaptureLab>
     });
   }
 
-  Widget _panel(String title, Widget child) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(24),
+  Widget _overview() => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= 860;
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          _simulationPanel(wide),
+          const SizedBox(height: 16),
+          if (wide)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _activityPanel()),
+                  const SizedBox(width: 16),
+                  Expanded(child: _channelsPanel()),
+                ],
+              ),
+            )
+          else ...[
+            _activityPanel(),
+            const SizedBox(height: 16),
+            _channelsPanel(),
+          ],
+        ],
+      );
+    },
+  );
+
+  Widget _simulationPanel(bool wide) {
+    final simulated = _automation is AutomationBinding;
+    final enabled = _automation?.pretendForeground ?? false;
+    final lifecycle = _automation == null
+        ? 'normal entrypoint'
+        : _automation!.rawLifecycle?.name ?? 'not reported';
+    final covers = _scope(
+      'Covers',
+      const ['Framework lifecycle observers', 'View-focus notifications'],
+      Icons.check_rounded,
+      Lab.ok,
+    );
+    final excludes = _scope(
+      'Not simulated',
+      const [
+        'IME and OS hotkeys',
+        'Foreground HWND checks',
+        'Native activation',
+      ],
+      Icons.close_rounded,
+      Lab.clay,
+    );
+    return LabPanel(
+      eyebrow: simulated ? 'Windows test entrypoint' : 'Platform owned',
+      title: simulated ? 'Foreground simulation' : 'Real platform lifecycle',
+      // Simulation exists only in the Windows test binding; mobile shows
+      // the real lifecycle without a control it could never enable.
+      trailing: simulated
+          ? Switch(
+              key: const ValueKey('foreground-switch'),
+              value: enabled,
+              onChanged: (value) => _automation!.setPretendForeground(value),
+            )
+          : null,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            simulated
+                ? 'Treat this app as foreground'
+                : 'Lifecycle and focus come from the platform',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Lab.text,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            simulated
+                ? 'Windows test entrypoint only. Mobile lifecycle remains real.'
+                : 'No simulation in this binding. Observations are reported as they occur.',
+            style: const TextStyle(fontSize: 14, color: Lab.muted),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              LabReadout(
+                label: 'Platform lifecycle',
+                value: lifecycle,
+                led: lifecycle == 'resumed' ? Lab.ok : Lab.clay,
+              ),
+              if (simulated)
+                LabReadout(
+                  label: 'Simulation',
+                  value: enabled ? 'engaged' : 'off',
+                  led: enabled ? Lab.clay : Lab.off,
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          const Divider(height: 1, color: Lab.line),
+          const SizedBox(height: 18),
+          if (wide)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: covers),
+                const SizedBox(width: 24),
+                Expanded(child: excludes),
+              ],
+            )
+          else ...[
+            covers,
+            const SizedBox(height: 14),
+            excludes,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _scope(String title, List<String> items, IconData icon, Color color) =>
+      Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 16),
-          child,
-        ],
-      ),
-    ),
-  );
-
-  Widget _overview() => ListView(
-    children: [
-      _panel(
-        _os['platform'] == 'android'
-            ? 'Real device lifecycle'
-            : 'Foreground simulation',
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SwitchListTile(
-              key: const ValueKey('foreground-switch'),
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Treat this app as foreground'),
-              subtitle: const Text(
-                'Windows test entrypoint only. Mobile lifecycle remains real.',
+          Text(title.toUpperCase(), style: Lab.eyebrow()),
+          const SizedBox(height: 10),
+          for (final item in items)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: .14),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: color.withValues(alpha: .4)),
+                    ),
+                    child: Icon(icon, size: 14, color: color),
+                  ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      item,
+                      style: const TextStyle(fontSize: 14, color: Lab.text),
+                    ),
+                  ),
+                ],
               ),
-              value: _automation?.pretendForeground ?? false,
-              onChanged: _automation is! AutomationBinding
-                  ? null
-                  : (value) => _automation!.setPretendForeground(value),
             ),
-            const Divider(),
+        ],
+      );
+
+  Widget _activityPanel() => LabPanel(
+    eyebrow: 'Gated by resumed',
+    title: 'Foreground-only activity',
+    accent: Lab.sky,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
             Text(
-              'Platform lifecycle: ${_automation?.rawLifecycle?.name ?? 'normal entrypoint'}',
+              '$_gatedTicks',
+              key: const ValueKey('foreground-ticks'),
+              style: Lab.monoStyle(size: 52, weight: FontWeight.w700),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(width: 10),
             const Text(
-              'Covers framework lifecycle observers and view-focus notifications.\n'
-              'Does not simulate IME, OS hotkeys, foreground HWND checks, or native activation.',
+              'updates',
+              style: TextStyle(fontSize: 16, color: Lab.muted),
             ),
           ],
         ),
-      ),
-      const SizedBox(height: 16),
-      _panel(
-        'Foreground-only activity',
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 16),
+        LabMeter(filled: (_gatedTicks % 50) ~/ 2),
+        const SizedBox(height: 14),
+        const Text(
+          'This activity advances only while Flutter reports resumed.',
+          style: TextStyle(fontSize: 14, color: Lab.muted),
+        ),
+        const SizedBox(height: 10),
+        Row(
           children: [
-            Text(
-              '$_gatedTicks updates',
-              key: const ValueKey('foreground-ticks'),
-              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w700),
+            const Expanded(
+              child: Text(
+                'Animate capture marker',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Lab.text,
+                ),
+              ),
             ),
-            const SizedBox(height: 12),
-            LinearProgressIndicator(value: (_gatedTicks % 50) / 50),
-            const SizedBox(height: 12),
-            const Text(
-              'This activity advances only while Flutter reports resumed.',
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Animate capture marker'),
+            Switch(
               value: _motion,
               onChanged: (value) => setState(() => _motion = value),
             ),
           ],
         ),
-      ),
-      const SizedBox(height: 16),
-      _panel(
-        'Capture channels',
-        const Text(
-          'App PNG: Flutter RepaintBoundary\n'
-          'System capture: Windows WGC / Android ADB\n'
-          'Automation: Flutter Driver over the local VM service',
-        ),
-      ),
-    ],
+      ],
+    ),
   );
+
+  Widget _channelsPanel() => LabPanel(
+    eyebrow: 'Evidence',
+    title: 'Capture channels',
+    accent: Lab.teal,
+    child: Column(
+      children: [
+        _channel(
+          Icons.image_outlined,
+          'App PNG',
+          'Flutter RepaintBoundary',
+          Lab.clay,
+        ),
+        const SizedBox(height: 10),
+        _channel(
+          Icons.monitor_outlined,
+          'System capture',
+          'Platform window or device capture',
+          Lab.sky,
+        ),
+        const SizedBox(height: 10),
+        _channel(
+          Icons.cable_outlined,
+          'Automation',
+          'Flutter Driver over the local VM service',
+          Lab.teal,
+        ),
+      ],
+    ),
+  );
+
+  Widget _channel(IconData icon, String title, String detail, Color color) =>
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0x800a0e17),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Lab.line),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .14),
+                borderRadius: BorderRadius.circular(11),
+                border: Border.all(color: color.withValues(alpha: .4)),
+              ),
+              child: Icon(icon, size: 20, color: color),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Lab.text,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    detail,
+                    style: Lab.monoStyle(size: 12, color: Lab.muted),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+
+  static const _artworks = [
+    'Aurora',
+    'Tide',
+    'Lattice',
+    'Orbit',
+    'Drift',
+    'Pollen',
+    'Halo',
+    'Current',
+    'Mosaic',
+    'Eclipse',
+    'Ripple',
+    'Ember',
+    'Nova',
+    'Swell',
+    'Grid',
+    'Perigee',
+    'Breeze',
+    'Spark',
+    'Zenith',
+    'Undertow',
+    'Weave',
+    'Comet',
+    'Shoal',
+    'Glint',
+  ];
 
   Widget _gallery() => NotificationListener<ScrollNotification>(
     onNotification: (event) {
@@ -709,42 +1127,69 @@ class CaptureLabState extends State<CaptureLab>
     },
     child: GridView.builder(
       key: const ValueKey('gallery-scroll'),
+      padding: const EdgeInsets.only(bottom: 24),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 280,
-        mainAxisExtent: 190,
+        mainAxisExtent: 210,
         crossAxisSpacing: 16,
         mainAxisSpacing: 16,
       ),
       itemCount: 24,
-      itemBuilder: (context, index) => Card(
-        color: Colors.primaries[index % Colors.primaries.length].shade100,
-        child: InkWell(
-          key: ValueKey('tile-$index'),
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => setState(() => _clicks++),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  [
-                    Icons.landscape_outlined,
-                    Icons.auto_awesome_outlined,
-                    Icons.palette_outlined,
-                  ][index % 3],
-                  size: 36,
-                ),
-                const Spacer(),
-                Text(
-                  'Sample ${index + 1}',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
+      itemBuilder: (context, index) => DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Lab.line),
+          color: Lab.surface,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: ValueKey('tile-$index'),
+              onTap: () => setState(() => _clicks++),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: LabArt(index)),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _artworks[index],
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Lab.text,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                ['Orbits', 'Waves', 'Dot field'][index % 3],
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  color: Lab.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          'tile-$index',
+                          style: Lab.monoStyle(size: 11, color: Lab.muted),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Text('Stable key: tile-$index'),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -752,137 +1197,286 @@ class CaptureLabState extends State<CaptureLab>
     ),
   );
 
-  Widget _scenarios() => ListView(
-    children: [
-      _panel(
-        'Modal interaction and real animation',
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _scenarios() => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= 860;
+      final dialog = _dialogPanel();
+      final stage = _stagePanel();
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: wide
+            ? [
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(flex: 2, child: dialog),
+                      const SizedBox(width: 16),
+                      Expanded(flex: 3, child: stage),
+                    ],
+                  ),
+                ),
+              ]
+            : [dialog, const SizedBox(height: 16), stage],
+      );
+    },
+  );
+
+  Widget _dialogPanel() => LabPanel(
+    eyebrow: 'Modal route',
+    title: 'Confirmation dialog',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        FilledButton.icon(
+          key: const ValueKey('open-dialog'),
+          onPressed: _showConfirmation,
+          icon: const Icon(Icons.open_in_new_rounded, size: 18),
+          label: const Text('Open confirmation dialog'),
+        ),
+        const SizedBox(height: 18),
+        const Text(
+          'Barrier dismissal is off; the page behind stays blocked.',
+          style: TextStyle(fontSize: 14, color: Lab.muted),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
           children: [
-            Wrap(
-              spacing: 16,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                FilledButton.icon(
-                  key: const ValueKey('open-dialog'),
-                  onPressed: _showConfirmation,
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Open confirmation dialog'),
-                ),
-                Text(
-                  'Result: $_dialogResult · confirmed $_dialogConfirmed',
-                  key: const ValueKey('dialog-result'),
-                ),
-              ],
+            LabReadout(
+              label: 'Result',
+              value: _dialogResult,
+              led: switch (_dialogResult) {
+                'confirmed' => Lab.ok,
+                'cancelled' => Lab.clay,
+                _ => Lab.off,
+              },
             ),
-            const SizedBox(height: 20),
-            // A dedicated region excludes the heartbeat/status labels from pixel
-            // motion checks, so changing text cannot masquerade as animation.
-            SizedBox(
-              key: _animationKey,
-              height: 140,
-              width: double.infinity,
-              child: ColoredBox(
-                color: const Color(0xff14243b),
+            LabReadout(
+              label: 'Confirmed',
+              value: '$_dialogConfirmed',
+              led: _dialogOpen ? Lab.sky : Lab.off,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Result: $_dialogResult · confirmed $_dialogConfirmed',
+          key: const ValueKey('dialog-result'),
+          style: Lab.monoStyle(size: 11, color: Lab.muted),
+        ),
+      ],
+    ),
+  );
+
+  Widget _stagePanel() => LabPanel(
+    eyebrow: 'AnimationController · 2 s each way',
+    title: 'Animation stage',
+    accent: Lab.sky,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Controls sit above the stage so they stay on screen at phone sizes;
+        // Driver taps require a hit-testable target and never scroll.
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            FilledButton.icon(
+              key: const ValueKey('animation-play'),
+              onPressed: () {
+                _animation.repeat(reverse: true);
+                setState(() {});
+              },
+              icon: const Icon(Icons.play_arrow_rounded, size: 18),
+              label: const Text('Play'),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('animation-pause'),
+              onPressed: () {
+                _animation.stop();
+                setState(() {});
+              },
+              icon: const Icon(Icons.pause_rounded, size: 18),
+              label: const Text('Pause'),
+            ),
+            TextButton.icon(
+              key: const ValueKey('animation-reset'),
+              onPressed: () {
+                _animation.reset();
+                setState(() {});
+              },
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('Reset'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        // A dedicated region excludes the heartbeat/status labels from pixel
+        // motion checks, so changing text cannot masquerade as animation.
+        SizedBox(
+          key: _animationKey,
+          height: 140,
+          width: double.infinity,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: ColoredBox(
+              color: const Color(0xff0c1220),
+              child: CustomPaint(
+                painter: const _StagePainter(),
                 child: AnimatedBuilder(
                   animation: _animation,
                   builder: (context, child) => Align(
                     alignment: Alignment(-0.85 + _animation.value * 1.7, 0),
                     child: Transform.rotate(
                       angle: _animation.value * 6.283185,
-                      child: Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          color: const Color(0xfff0b429),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow,
-                          size: 40,
-                          color: Color(0xff14243b),
-                        ),
+                      child: child,
+                    ),
+                  ),
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: Lab.clay,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: const Color(0xfff2b38f),
+                        width: 2,
                       ),
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      size: 38,
+                      color: Color(0xff1b0d07),
                     ),
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12,
-              children: [
-                FilledButton(
-                  key: const ValueKey('animation-play'),
-                  onPressed: () {
-                    _animation.repeat(reverse: true);
-                    setState(() {});
-                  },
-                  child: const Text('Play animation'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Pixel verification uses only this stage.',
+          style: Lab.monoStyle(size: 11, color: Lab.muted),
+        ),
+      ],
+    ),
+  );
+
+  Widget _interactions() => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= 860;
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: wide
+            ? [
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(flex: 3, child: _inputPanel()),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        flex: 2,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _keyboardPanel(),
+                            const SizedBox(height: 16),
+                            Expanded(child: _eventsPanel()),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                OutlinedButton(
-                  key: const ValueKey('animation-pause'),
-                  onPressed: () {
-                    _animation.stop();
-                    setState(() {});
-                  },
-                  child: const Text('Pause'),
-                ),
-                TextButton(
-                  key: const ValueKey('animation-reset'),
-                  onPressed: () {
-                    _animation.reset();
-                    setState(() {});
-                  },
-                  child: const Text('Reset'),
-                ),
+              ]
+            : [
+                _inputPanel(),
+                const SizedBox(height: 16),
+                _keyboardPanel(),
+                const SizedBox(height: 16),
+                _eventsPanel(),
               ],
+      );
+    },
+  );
+
+  Widget _inputPanel() => LabPanel(
+    eyebrow: 'Driver text and pointer',
+    title: 'Text and pointer input',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          key: const ValueKey('input-field'),
+          controller: _text,
+          focusNode: _focus,
+          style: const TextStyle(fontSize: 16, color: Lab.text),
+          decoration: const InputDecoration(
+            labelText: 'Automation text',
+            hintText: 'Typed through the framework text path',
+            prefixIcon: Icon(Icons.keyboard_alt_outlined, size: 20),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            LabReadout(
+              label: 'Characters',
+              value: '${_text.text.characters.length}',
+              led: _text.text.isEmpty ? Lab.off : Lab.sky,
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'AnimationController · 2 seconds each way · pixel verification uses only the dark stage.',
+            LabReadout(
+              label: 'Field focus',
+              value: _focus.hasFocus ? 'focused' : 'idle',
+              led: _focus.hasFocus ? Lab.ok : Lab.off,
             ),
           ],
         ),
-      ),
-    ],
-  );
-
-  Widget _interactions() => ListView(
-    children: [
-      _panel(
-        'Text and pointer input',
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 20),
+        const Divider(height: 1, color: Lab.line),
+        const SizedBox(height: 18),
+        // Wraps on narrow screens instead of squeezing the button.
+        Wrap(
+          spacing: 20,
+          runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            TextField(
-              key: const ValueKey('input-field'),
-              controller: _text,
-              focusNode: _focus,
-              decoration: const InputDecoration(
-                labelText: 'Automation text',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              key: const ValueKey('increment-button'),
-              onPressed: () => setState(() => _clicks++),
-              icon: const Icon(Icons.add),
-              label: const Text('Increment counter'),
-            ),
-            const SizedBox(height: 16),
             Text(
               '$_clicks clicks',
               key: const ValueKey('click-count'),
-              style: const TextStyle(fontSize: 24),
+              style: Lab.monoStyle(size: 34, weight: FontWeight.w700),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('increment-button'),
+              onPressed: () => setState(() => _clicks++),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Increment counter'),
             ),
           ],
         ),
-      ),
-      const SizedBox(height: 16),
-      _panel(
-        'Framework keyboard event',
+      ],
+    ),
+  );
+
+  Widget _keyboardPanel() => LabPanel(
+    eyebrow: 'Framework key events',
+    title: 'Keyboard target',
+    accent: Lab.teal,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Focus the target, then send F6 through Flutter key events. '
+          'No OS keyboard input is generated.',
+          style: TextStyle(fontSize: 14, color: Lab.muted),
+        ),
+        const SizedBox(height: 14),
         Focus(
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent &&
@@ -893,14 +1487,79 @@ class CaptureLabState extends State<CaptureLab>
             return KeyEventResult.ignored;
           },
           child: Builder(
-            builder: (context) => OutlinedButton(
+            builder: (context) => OutlinedButton.icon(
               key: const ValueKey('focus-key-button'),
               onPressed: () => Focus.of(context).requestFocus(),
-              child: Text('Focus keyboard target · F6 count $_shortcutCount'),
+              icon: const Icon(Icons.center_focus_strong_outlined, size: 18),
+              label: Text('Focus keyboard target · F6 count $_shortcutCount'),
             ),
           ),
         ),
-      ),
-    ],
+      ],
+    ),
   );
+
+  Widget _eventsPanel() {
+    final events = _lifecycleEvents.reversed.take(6).toList();
+    return LabPanel(
+      eyebrow: 'Real platform',
+      title: 'Lifecycle events',
+      accent: Lab.sky,
+      child: events.isEmpty
+          ? const Text(
+              'No lifecycle changes yet.',
+              style: TextStyle(fontSize: 14, color: Lab.muted),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final (index, event) in events.indexed)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Text(
+                          (_lifecycleEvents.length - index).toString().padLeft(
+                            2,
+                            '0',
+                          ),
+                          style: Lab.monoStyle(size: 12, color: Lab.muted),
+                        ),
+                        const SizedBox(width: 12),
+                        LabLed(event == 'resumed' ? Lab.ok : Lab.clay, size: 6),
+                        const SizedBox(width: 10),
+                        Text(event, style: Lab.monoStyle(size: 14)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _StagePainter extends CustomPainter {
+  const _StagePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()..color = const Color(0x0fffffff);
+    for (var x = 0.0; x < size.width; x += 28) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 0.0; y < size.height; y += 28) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    // The track the object travels along.
+    canvas.drawLine(
+      Offset(size.width * .075, size.height / 2),
+      Offset(size.width * .925, size.height / 2),
+      Paint()
+        ..color = const Color(0x5554c5f8)
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
