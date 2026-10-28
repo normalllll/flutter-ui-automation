@@ -951,6 +951,10 @@ void main() {
       try {
         await app.stdout.first;
         final original = UnixIdentity.read(app.pid)!;
+        // Readiness only requires a display variable; CI runners have none.
+        final host = TestHost(
+          environment: {...Platform.environment, 'DISPLAY': ':999'},
+        );
         host.onStart = () async {
           final controller = await Process.start('sh', [
             '-c',
