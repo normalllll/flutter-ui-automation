@@ -21,6 +21,23 @@ class Host {
   final Map<String, String> environment;
   final _children = <Process>{};
 
+  /// Reap owned children even when they ignore SIGTERM. Keeping this bounded
+  /// also lets an SSH stdio disconnect finish without stranding the service.
+  Future<void> terminate(Process process) async {
+    process.kill();
+    try {
+      await process.exitCode.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      process.kill(ProcessSignal.sigkill);
+      try {
+        await process.exitCode.timeout(const Duration(seconds: 5));
+      } on TimeoutException {
+        // Cleanup runs from finally blocks; do not replace the original error.
+        stderr.writeln('Process ${process.pid} survived SIGKILL for 5 s');
+      }
+    }
+  }
+
   Future<Process> start(
     String executable,
     List<String> arguments, {
@@ -53,15 +70,31 @@ class Host {
   }) async {
     cancellation?.check();
     final process = await start(executable, arguments, directory: directory);
-    final bytes = process.stdout.fold<BytesBuilder>(
-      BytesBuilder(copy: false),
-      (out, data) => out..add(data),
-    );
-    final errors = process.stderr.transform(utf8.decoder).join();
+    final bytes = BytesBuilder(copy: false);
+    final errors = StringBuffer();
+    final outputStream = process.stdout.listen(bytes.add);
+    final errorStream = process.stderr
+        .transform(utf8.decoder)
+        .listen(errors.write);
     try {
-      final exit = process.exitCode.timeout(timeout);
-      final code = await (cancellation?.wait(exit) ?? exit);
-      final result = HostResult(code, (await bytes).takeBytes(), await errors);
+      // A subprocess can exit while its descendants still hold stdout/stderr.
+      // Apply cancellation and timeout to pipe draining as well as exitCode.
+      final completed =
+          Future.wait<Object?>([
+            process.exitCode,
+            outputStream.asFuture<void>(),
+            errorStream.asFuture<void>(),
+          ]).timeout(
+            timeout,
+            onTimeout: () => throw AutomationError(
+              'process_timeout',
+              '${p.basename(executable)} did not finish within ${timeout.inSeconds} s',
+              {'stderr': errors.toString()},
+            ),
+          );
+      final values = await (cancellation?.wait(completed) ?? completed);
+      final code = values[0] as int;
+      final result = HostResult(code, bytes.takeBytes(), errors.toString());
       if (check && code != 0) {
         throw AutomationError(
           'process_failed',
@@ -76,18 +109,15 @@ class Host {
       }
       return result;
     } finally {
+      await Future.wait([outputStream.cancel(), errorStream.cancel()]);
       if (_children.contains(process)) {
-        process.kill();
-        await process.exitCode.timeout(const Duration(seconds: 5));
+        await terminate(process);
       }
     }
   }
 
   Future<void> close() async {
-    for (final process in _children.toList()) {
-      process.kill();
-    }
-    await Future.wait(_children.map((process) => process.exitCode));
+    await Future.wait(_children.toList().map(terminate));
   }
 }
 
@@ -126,8 +156,14 @@ class Toolchain {
   String get fixture => p.join(root, 'examples', 'capture_lab');
   String program(String name, {String? variable}) {
     final explicit = variable == null ? null : environment[variable];
-    if (explicit != null && File(explicit).existsSync()) {
-      return File(explicit).absolute.path;
+    if (explicit != null && explicit.isNotEmpty) {
+      // An explicit override is a user choice; never substitute another tool.
+      if (File(explicit).existsSync()) return File(explicit).absolute.path;
+      throw AutomationError(
+        'missing_prerequisite',
+        '$variable points to a missing $name executable',
+        {'environmentVariable': variable, 'path': explicit},
+      );
     }
     final extensions = Platform.isWindows ? ['', '.exe', '.bat', '.cmd'] : [''];
     for (final directory in (environment['PATH'] ?? '').split(
@@ -203,10 +239,11 @@ class Toolchain {
     for (final directory in (environment['PATH'] ?? '').split(
       Platform.isWindows ? ';' : ':',
     )) {
-      if (File(
+      final launcher = File(
         p.join(directory, Platform.isWindows ? 'flutter.bat' : 'flutter'),
-      ).existsSync()) {
-        return p.dirname(directory);
+      );
+      if (launcher.existsSync()) {
+        return p.dirname(p.dirname(launcher.resolveSymbolicLinksSync()));
       }
     }
     throw const AutomationError(

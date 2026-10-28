@@ -89,22 +89,22 @@ def capture_png(path, *, hwnd, process_id, helper=DEFAULT_HELPER, backend="print
     try:
         result = subprocess.run([str(helper), "--hwnd", str(hwnd), "--backend", backend, "--png", str(partial), *probe_arguments(probe), *diagnostic_args],
             capture_output=True, text=True, timeout=20, creationflags=CREATE_NO_WINDOW)
-        if not result.returncode:
-            partial.replace(path)
+        if result.returncode:
+            try:
+                details = json.loads(result.stderr)
+            except (ValueError, TypeError):
+                details = None
+            if isinstance(details, dict) and details.get('error'):
+                raise CaptureError(details.get('message', 'Native capture failed'), details)
+            raise CaptureError(result.stderr.strip())
+        # Validate metadata before publishing: a failed run must leave no image.
+        try:
+            metadata = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Invalid capture metadata: stdout={result.stdout!r}, stderr={result.stderr!r}") from error
+        partial.replace(path)
     finally:
         partial.unlink(missing_ok=True)
-    if result.returncode:
-        try:
-            details = json.loads(result.stderr)
-        except (ValueError, TypeError):
-            details = None
-        if isinstance(details, dict) and details.get('error'):
-            raise CaptureError(details.get('message', 'Native capture failed'), details)
-        raise CaptureError(result.stderr.strip())
-    try:
-        metadata = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"Invalid capture metadata: stdout={result.stdout!r}, stderr={result.stderr!r}; path={path}") from error
     return {**metadata, "path": str(path), "hwnd": hwnd, "pid": process_id,
             "presentationVerified": probe is not None}
 

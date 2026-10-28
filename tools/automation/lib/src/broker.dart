@@ -132,7 +132,12 @@ class Broker {
   }
 }
 
-Future<Json> brokerCall(Toolchain tools, String name, Json args) async {
+Future<Json> brokerCall(
+  Toolchain tools,
+  String name,
+  Json args, {
+  Cancellation? cancellation,
+}) async {
   final descriptor = File(p.join(tools.artifacts, 'service.json'));
   if (!await descriptor.exists()) {
     throw const AutomationError(
@@ -142,6 +147,9 @@ Future<Json> brokerCall(Toolchain tools, String name, Json args) async {
   }
   final info = decodeObject(await descriptor.readAsString());
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+  // Abandoning the request does not stop work already accepted by the owner;
+  // long operations use automation_jobs for cancellation.
+  unawaited(cancellation?.whenCancelled.then((_) => client.close(force: true)));
   try {
     final request = await client.postUrl(
       Uri.parse('http://127.0.0.1:${info.integer('port')}/call'),

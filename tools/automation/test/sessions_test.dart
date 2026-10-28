@@ -12,12 +12,31 @@ import 'package:flutter_ui_automation/src/host.dart';
 import 'package:flutter_ui_automation/src/protocol.dart';
 import 'package:flutter_ui_automation/src/sessions.dart';
 import 'package:flutter_ui_automation/src/windows.dart';
+import 'package:flutter_ui_automation/src/unix_process.dart';
+import 'package:flutter_ui_automation/src/unix_target.dart';
 
 class TestHost extends Host {
+  TestHost({super.environment});
   int calls = 0;
   final commands = <List<String>>[];
   Future<void> Function()? onRun;
   Future<HostResult> Function(List<String>)? handle;
+  Future<Process> Function()? onStart;
+
+  @override
+  Future<Process> start(
+    String executable,
+    List<String> arguments, {
+    String? directory,
+    Map<String, String> extraEnvironment = const {},
+  }) =>
+      onStart?.call() ??
+      super.start(
+        executable,
+        arguments,
+        directory: directory,
+        extraEnvironment: extraEnvironment,
+      );
 
   @override
   Future<HostResult> run(
@@ -46,6 +65,7 @@ class TestConnection extends FlutterConnection {
   int disconnects = 0;
   int restores = 0;
   Json snapshot = {};
+  bool failRestore = false;
 
   @override
   Future<Json> state() async => snapshot;
@@ -53,6 +73,9 @@ class TestConnection extends FlutterConnection {
   @override
   Future<Json> hook(String command, [Json arguments = const {}]) async {
     restores++;
+    if (failRestore) {
+      throw const AutomationError('restore_failed', 'Test failure');
+    }
     return {};
   }
 
@@ -63,17 +86,23 @@ class TestConnection extends FlutterConnection {
 }
 
 class AppBridge extends OfficialBridge {
-  AppBridge(this.state) : super((_) {});
+  AppBridge(this.state, {this.vmPid}) : super((_) {});
   final Json state;
+  final int? vmPid;
   final commands = <String>[];
+  final driverCommands = <String>[];
 
   @override
   Future<Json> tool(String name, Json arguments) async {
     final command = arguments.text('command');
     commands.add(command);
+    if (arguments['method'] == 'ext.flutter.driver') {
+      driverCommands.add(arguments.child('arguments').text('command'));
+    }
     if (command != 'callMethod') return toolResult({});
     return toolResult(switch (arguments.text('method')) {
       'getVM' => {
+        'pid': vmPid ?? state.child('native')['pid'],
         'isolates': [
           {'name': 'main', 'id': 'isolates/1'},
         ],
@@ -170,6 +199,31 @@ void main() {
       },
     );
   }
+  test('start cannot silently adopt an attached session ID', () async {
+    await expectLater(
+      sessions.open({'sessionId': current.id}, Cancellation()),
+      throwsA(code('session_conflict')),
+    );
+    expect(current.observations, 0);
+  });
+
+  test('a second session cannot attach to an endpoint in use', () async {
+    await expectLater(
+      sessions.open(
+        {
+          'sessionId': 'other',
+          'platform': 'windows',
+          // Same endpoint in its HTTP spelling.
+          'vmUri': 'http://127.0.0.1:1234/original=/',
+        },
+        Cancellation(),
+        attach: true,
+      ),
+      throwsA(code('session_conflict')),
+    );
+    expect(host.calls, 0);
+    expect(Directory(p.join(directory.path, 'leases')).existsSync(), false);
+  });
 
   test(
     'session reuse accepts the equivalent HTTP VM service endpoint',
@@ -302,7 +356,7 @@ void main() {
         'pid': pid,
         'identity': Platform.isWindows
             ? WindowsApi().identity(pid)?.toJson()
-            : null,
+            : UnixIdentity.read(pid)?.toJson(),
       }),
     );
     final result = await sessions.close(current.id);
@@ -312,6 +366,88 @@ void main() {
     expect(host.calls, 0);
     expect(connection.restores, 0);
   });
+
+  test(
+    'retained Unix recovery rejects a recycled VM endpoint before Driver changes',
+    () async {
+      final identity = UnixIdentity.read(pid)!;
+      final supervisor = {
+        'pid': 4294967294,
+        'birth': 'dead',
+        'image': '/dead/service',
+      };
+      await current.lease.create(recursive: true);
+      final claim = File(p.join(current.lease.path, 'owner'));
+      await claim.writeAsString(
+        jsonEncode({
+          'sessionId': 'old',
+          'pid': supervisor['pid'],
+          'identity': supervisor,
+        }),
+      );
+      final metadata = File(
+        p.join(directory.path, 'sessions', 'old', 'session.json'),
+      );
+      await metadata.parent.create(recursive: true);
+      await metadata.writeAsString(
+        jsonEncode({
+          'supervisor': supervisor,
+          'lease': current.lease.path,
+          'platform': Platform.operatingSystem,
+          'owned': false,
+          'unixIdentity': identity.toJson(),
+          'vmUri': 'ws://recycled',
+          'hooks': 'fixture',
+          'native': {'pid': pid, 'platform': Platform.operatingSystem},
+        }),
+      );
+      final bridge = AppBridge({
+        'native': <String, Object?>{'pid': pid + 1},
+      });
+      final targets = Sessions(host, sessions.tools, bridge);
+      await expectLater(
+        targets.recover('old', stopOwned: true),
+        throwsA(code('cleanup_incomplete')),
+      );
+      expect(bridge.driverCommands, isEmpty);
+      expect(await claim.exists(), true);
+      identity.requireCurrent();
+    },
+    skip: Platform.isWindows,
+  );
+
+  test(
+    'native state cannot replace the independently verified Unix VM process',
+    () async {
+      final host = TestHost(environment: {'DISPLAY': ':999'});
+      final bridge = AppBridge({
+        'native': <String, Object?>{
+          'pid': pid + 1,
+          'platform': Platform.operatingSystem,
+        },
+      }, vmPid: pid);
+      final targets = Sessions(host, sessions.tools, bridge);
+      await expectLater(
+        targets.open(
+          {
+            'sessionId': 'forged-native',
+            'platform': Platform.operatingSystem,
+            'vmUri': 'ws://unused',
+          },
+          Cancellation(),
+          attach: true,
+        ),
+        throwsA(code('target_changed')),
+      );
+      expect(targets.active, isEmpty);
+      expect(UnixIdentity.read(pid), isNotNull);
+      expect(
+        await Directory(p.join(directory.path, 'leases')).list().toList(),
+        isEmpty,
+      );
+    },
+    skip: Platform.isWindows,
+  );
 
   test('failed open releases only its own claim', () async {
     await expectLater(
@@ -442,7 +578,7 @@ void main() {
         'pid': pid,
         'identity': Platform.isWindows
             ? WindowsApi().identity(pid)?.toJson()
-            : null,
+            : UnixIdentity.read(pid)?.toJson(),
       }),
     );
   }
@@ -497,12 +633,152 @@ void main() {
     expect(await current.lease.exists(), false);
   });
 
+  test(
+    'failed attached restore retains modes and lease for a successful retry',
+    () async {
+      connection.snapshot = {
+        'native': <String, Object?>{'pid': 123},
+      };
+      deviceProcess(123, 'old');
+      final attached = androidSession(owned: false)..orientationChanged = true;
+      sessions.active[current.id] = attached;
+      await claimCurrent();
+      connection.failRestore = true;
+      await expectLater(
+        sessions.close(current.id),
+        throwsA(code('cleanup_incomplete')),
+      );
+      expect(await current.lease.exists(), true);
+      expect(attached.closing, false);
+      expect(attached.orientationChanged, true);
+      expect(connection.disconnects, 0);
+      connection.failRestore = false;
+      await sessions.close(current.id);
+      expect(attached.orientationChanged, false);
+      expect(await current.lease.exists(), false);
+    },
+  );
+
+  test('lease release failure leaves the live session retryable', () async {
+    connection.snapshot = {
+      'native': <String, Object?>{'pid': 123},
+    };
+    deviceProcess(123, 'old');
+    final attached = androidSession(owned: false);
+    sessions.active[current.id] = attached;
+    await claimCurrent();
+    final obstacle = File(p.join(current.lease.path, 'unexpected'));
+    await obstacle.writeAsString('preserve');
+    await expectLater(
+      sessions.close(current.id),
+      throwsA(code('lease_not_empty')),
+    );
+    expect(attached.closing, false);
+    expect(sessions.active[current.id], same(attached));
+    await obstacle.delete();
+    // The owner file must also remain available for retry.
+    expect(await File(p.join(current.lease.path, 'owner')).exists(), true);
+    await sessions.close(current.id);
+  });
+
+  test(
+    'iOS instance validation rejects a VM from a different simulator before any action',
+    () async {
+      host.handle = (arguments) async =>
+          output('${pid + 1} 0 UIKitApplication:test.fixture[another-device]');
+      final target = UnixTarget(
+        host,
+        sessions.tools,
+        TargetPlatform.ios,
+        deviceId: '00000000-0000-0000-0000-000000000001',
+        bundleId: 'test.fixture',
+      )..expectedIdentity = UnixIdentity.read(pid);
+      await expectLater(
+        target.validateInstance(
+          native: {'pid': pid, 'platform': 'ios', 'bundleId': 'test.fixture'},
+        ),
+        throwsA(code('target_changed')),
+      );
+      await expectLater(
+        target.lifecycle('resume', Cancellation()),
+        throwsA(code('target_changed')),
+      );
+      expect(host.commands.any((args) => args.contains('launch')), false);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test(
+    'iOS attach validates the VM PID before changing Driver settings',
+    () async {
+      const device = '00000000-0000-0000-0000-000000000001';
+      host.handle = (args) async {
+        if (args.contains('devices')) {
+          return output(
+            jsonEncode({
+              'devices': {
+                'runtime': [
+                  {'udid': device, 'state': 'Booted', 'isAvailable': true},
+                ],
+              },
+            }),
+          );
+        }
+        return output('${pid + 1} 0 UIKitApplication:test.fixture[other]');
+      };
+      final bridge = AppBridge({
+        'native': <String, Object?>{
+          'pid': pid,
+          'platform': 'ios',
+          'bundleId': 'test.fixture',
+        },
+      });
+      final targets = Sessions(host, sessions.tools, bridge);
+      await expectLater(
+        targets.open(
+          {
+            'sessionId': 'wrong-simulator',
+            'platform': 'ios',
+            'deviceId': device,
+            'package': 'test.fixture',
+            'vmUri': 'ws://unused',
+          },
+          Cancellation(),
+          attach: true,
+        ),
+        throwsA(code('target_changed')),
+      );
+      expect(bridge.driverCommands, isEmpty);
+      expect(bridge.commands.last, 'disconnect');
+      expect(
+        await Directory(p.join(directory.path, 'leases')).list().toList(),
+        isEmpty,
+      );
+    },
+    skip: !Platform.isMacOS,
+  );
+
+  test(
+    'exited attached app releases its lease even with saved temporary modes',
+    () async {
+      connection.snapshot = {
+        'native': <String, Object?>{'pid': 123},
+      };
+      final attached = androidSession(owned: false)..orientationChanged = true;
+      sessions.active[current.id] = attached;
+      await claimCurrent();
+      await sessions.close(current.id);
+      expect(await current.lease.exists(), false);
+      expect(connection.restores, 0);
+    },
+  );
+
   for (final replacement in [
     (pid: 456, ticks: 'new'),
     (pid: 123, ticks: 'new'),
   ]) {
     test(
-      'owned stop rejects a replacement Android process: $replacement',
+      'owned stop treats a replacement Android process as exited: $replacement',
       () async {
         connection.snapshot = {
           'native': <String, Object?>{'pid': 123},
@@ -511,13 +787,11 @@ void main() {
         final stale = androidSession(owned: true)..simulated = true;
         sessions.active[current.id] = stale;
         await claimCurrent();
-        await expectLater(
-          sessions.close(current.id),
-          throwsA(code('target_changed')),
-        );
-        expect(await current.lease.exists(), true);
-        expect(sessions.active[current.id], same(stale));
-        expect(connection.disconnects, 0);
+        // The original instance is gone: release the lease instead of leaving
+        // the session stuck, but never restore or stop the replacement.
+        await sessions.close(current.id);
+        expect(await current.lease.exists(), false);
+        expect(sessions.active, isEmpty);
         expect(connection.restores, 0);
         expect(host.commands.any((args) => args.contains('force-stop')), false);
       },
@@ -538,7 +812,7 @@ void main() {
   });
 
   test(
-    'recycled Windows PID cannot restore or stop the current process',
+    'recycled Windows PID is treated as exited without touching the new process',
     () async {
       final native = WindowsApi().identity(pid)!;
       final stale = Session(
@@ -554,14 +828,11 @@ void main() {
       )..simulated = true;
       sessions.active[current.id] = stale;
       await claimCurrent();
-      await expectLater(
-        sessions.close(current.id),
-        throwsA(code('target_changed')),
-      );
+      await sessions.close(current.id);
       expect(native.same(WindowsApi().identity(pid)), true);
       expect(connection.restores, 0);
-      expect(connection.disconnects, 0);
-      expect(await current.lease.exists(), true);
+      expect(await current.lease.exists(), false);
+      expect(sessions.active, isEmpty);
     },
     skip: !Platform.isWindows,
   );
@@ -670,5 +941,51 @@ void main() {
         await targets.closeAll();
       }
     },
+  );
+
+  test(
+    'failed owned session publication stops the native app after its controller has exited',
+    () async {
+      final app = await Process.start('sh', ['-c', 'echo ready; read value']);
+      final errors = app.stderr.drain<void>();
+      try {
+        await app.stdout.first;
+        final original = UnixIdentity.read(app.pid)!;
+        host.onStart = () async {
+          final controller = await Process.start('sh', [
+            '-c',
+            '''printf '%s\\n' '[{"event":"app.debugPort","params":{"wsUri":"ws://unused"}}]' '[{"event":"app.started"}]' ''',
+          ]);
+          await controller.exitCode;
+          return controller;
+        };
+        final bridge = AppBridge({
+          'native': <String, Object?>{'pid': app.pid, 'platform': 'linux'},
+        });
+        final targets = Sessions(host, sessions.tools, bridge);
+        final obstacle = Directory(
+          p.join(directory.path, 'sessions', 'rollback', 'session.json'),
+        );
+        await obstacle.create(recursive: true);
+        await expectLater(
+          targets.open({
+            'sessionId': 'rollback',
+            'platform': 'linux',
+          }, Cancellation()),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(original.same(UnixIdentity.read(app.pid)), false);
+        expect(targets.active, isEmpty);
+        expect(
+          await Directory(p.join(directory.path, 'leases')).list().toList(),
+          isEmpty,
+        );
+      } finally {
+        app.kill();
+        await app.exitCode;
+        await errors;
+      }
+    },
+    skip: !Platform.isLinux,
   );
 }

@@ -11,8 +11,11 @@ import 'gateway.dart';
 import 'host.dart';
 import 'protocol.dart';
 import 'windows.dart';
+import 'target_platform.dart';
+import 'unix_process.dart';
+import 'unix_target.dart';
 
-enum TargetPlatform { windows, android }
+export 'target_platform.dart';
 
 class FlutterProcess {
   FlutterProcess(this.process, this.log);
@@ -127,6 +130,8 @@ class Session {
     this.flutter,
     this.executableProcess,
     this.windowsIdentity,
+    this.unixTarget,
+    this.unixIdentity,
   });
   final String id, project, entrypoint;
   final TargetPlatform platform;
@@ -134,6 +139,10 @@ class Session {
   final bool owned;
   final FlutterConnection connection;
   final AndroidDevice? android;
+  final UnixTarget? unixTarget;
+  UnixIdentity? unixIdentity;
+  String? get deviceId => android?.serial ?? unixTarget?.deviceId;
+  String? get package => android?.package ?? unixTarget?.bundleId;
   FlutterProcess? flutter;
   Process? executableProcess;
   WindowsIdentity? windowsIdentity;
@@ -159,7 +168,7 @@ class Session {
         );
       }
       WindowsApi().requireWindow(native.integer('hwnd'), native.integer('pid'));
-    } else {
+    } else if (platform == TargetPlatform.android) {
       final current = await android!.identity();
       if (current?['pid'] != native['pid'] ||
           (androidIdentity?['startTicks'] != null &&
@@ -169,6 +178,8 @@ class Session {
           'Android process identity changed',
         );
       }
+    } else {
+      await unixTarget!.validateInstance(native: native);
     }
     lastState = state;
     return state;
@@ -187,14 +198,15 @@ class Session {
     'lease': lease.path,
     'supervisor': Platform.isWindows
         ? WindowsApi().identity(pid)?.toJson()
-        : {'pid': pid},
+        : UnixIdentity.read(pid)?.toJson(),
     'simulated': simulated,
     'textEmulation': textEmulation,
     'orientationChanged': orientationChanged,
-    'deviceId': android?.serial,
-    'package': android?.package,
+    'deviceId': deviceId,
+    'package': package,
     'windowsIdentity': windowsIdentity?.toJson(),
     'androidIdentity': androidIdentity,
+    'unixIdentity': unixIdentity?.toJson(),
     'native': lastState['native'],
     'state': lastState,
   };
@@ -217,7 +229,7 @@ class Sessions {
     'sessionId': id,
     'identity': Platform.isWindows
         ? WindowsApi().identity(pid)?.toJson()
-        : null,
+        : UnixIdentity.read(pid)?.toJson(),
   };
 
   WindowsIdentity _identity(Json value) => WindowsIdentity(
@@ -235,9 +247,13 @@ class Sessions {
       if (actual['sessionId'] == expected['sessionId'] &&
           actual['pid'] == expected['pid'] &&
           (expectedIdentity is Json
-              ? _identity(
-                  expectedIdentity,
-                ).same(_identity(actual.child('identity')))
+              ? Platform.isWindows
+                    ? _identity(
+                        expectedIdentity,
+                      ).same(_identity(actual.child('identity')))
+                    : UnixIdentity.fromJson(
+                        expectedIdentity,
+                      ).same(UnixIdentity.fromJson(actual.child('identity')))
               : actual['identity'] == null)) {
         return;
       }
@@ -255,26 +271,62 @@ class Sessions {
     // Recovery can await app cleanup for some time. Recheck at release as well
     // so stale metadata never deletes a replacement owner's claim.
     await _requireLeaseOwner(lease, expected);
-    await File(p.join(lease.path, 'owner')).delete();
+    final claim = File(p.join(lease.path, 'owner'));
+    if ((await lease.list().toList()).any(
+      (entry) => entry.path != claim.path,
+    )) {
+      throw const AutomationError(
+        'lease_not_empty',
+        'Unexpected lease contents; ownership retained',
+      );
+    }
+    await claim.delete();
     // Delete only the empty directory; never enumerate and delete other claims.
-    await lease.delete();
+    try {
+      await lease.delete();
+    } on FileSystemException {
+      // Preserve retry authority if the directory could not be removed. An
+      // exclusive create never overwrites a new owner's intervening claim.
+      try {
+        await claim.create(exclusive: true);
+        await claim.writeAsString(jsonEncode(expected));
+      } on FileSystemException {
+        /* Preserve another owner's claim. */
+      }
+      rethrow;
+    }
   }
 
-  Future<void> _requireCleanupTarget(Session session) async {
+  Future<bool> _requireCleanupTarget(Session session) async {
     if (session.platform == TargetPlatform.windows) {
       final expected = session.windowsIdentity;
-      final current = expected == null
-          ? null
-          : WindowsApi().identity(expected.pid);
-      if (current == null || expected!.same(current)) return;
-    } else {
+      // No retained OS identity is not evidence of process exit. In that case
+      // preserve the existing restore responsibility and rely on state().
+      if (expected == null) return true;
+      final current = WindowsApi().identity(expected.pid);
+      // A different creation time proves the original instance exited and the
+      // PID was reused. Treat that as exit; never restore or stop the new one.
+      if (current == null || current.created != expected.created) return false;
+      if (expected.same(current)) return true;
+    } else if (session.platform == TargetPlatform.android) {
       final current = await session.android!.identity();
       final expected = session.androidIdentity;
-      if (current == null ||
-          current['pid'] == expected?['pid'] &&
-              (expected?['startTicks'] == null ||
-                  current['startTicks'] == expected?['startTicks'])) {
-        return;
+      if (current == null) return false;
+      if (current['pid'] == expected?['pid'] &&
+          (expected?['startTicks'] == null ||
+              current['startTicks'] == expected?['startTicks'])) {
+        return true;
+      }
+      // The package now runs as another process: the original instance is
+      // gone. Leave the replacement alone rather than blocking cleanup.
+      if (expected != null) return false;
+    } else {
+      final expected = session.unixIdentity;
+      final current = expected == null ? null : UnixIdentity.read(expected.pid);
+      if (current == null || current.birth != expected!.birth) return false;
+      if (expected.same(current)) {
+        await session.unixTarget!.validateInstance();
+        return true;
       }
     }
     throw const AutomationError(
@@ -332,8 +384,7 @@ class Sessions {
           stderr.writeln('Launch cancellation cleanup: $e');
         }
       }
-      process.kill();
-      await process.exitCode;
+      await host.terminate(process);
       rethrow;
     }
   }
@@ -354,15 +405,17 @@ class Sessions {
       final existing = get(id);
       if ((args['platform'] != null &&
               args['platform'] != existing.platform.name) ||
-          (args['deviceId'] != null &&
-              args['deviceId'] != existing.android?.serial) ||
-          (args['package'] != null &&
-              args['package'] != existing.android?.package) ||
+          (args['deviceId'] != null && args['deviceId'] != existing.deviceId) ||
+          (args['package'] != null && args['package'] != existing.package) ||
           (args['vmUri'] != null &&
               _vmEndpoint(args.text('vmUri')) !=
                   _vmEndpoint(existing.connection.uri)) ||
           (args['hooks'] != null &&
               args['hooks'] != existing.connection.hooks.name) ||
+          // start must not silently adopt an attached session, nor attach
+          // reuse an owned one; ownership decides who stops the app.
+          attach == existing.owned ||
+          (args['executable'] != null && existing.executableProcess == null) ||
           (args['entrypoint'] != null &&
               !p.equals(
                 p.normalize(p.join(existing.project, args.text('entrypoint'))),
@@ -381,13 +434,22 @@ class Sessions {
       await existing.state();
       return existing;
     }
-    final platform = TargetPlatform.values.byName(args.text('platform'));
-    if (platform == TargetPlatform.windows && !Platform.isWindows) {
-      throw const AutomationError(
-        'unsupported_platform',
-        'Windows target requires a Windows host',
-      );
+    if (attach && args['vmUri'] is String) {
+      // The embedded server keeps one VM connection per URI; stopping either
+      // session would disconnect the other's endpoint.
+      final endpoint = _vmEndpoint(args.text('vmUri'));
+      final holder = active.values
+          .where((s) => _vmEndpoint(s.connection.uri) == endpoint)
+          .firstOrNull;
+      if (holder != null) {
+        throw AutomationError(
+          'session_conflict',
+          'VM endpoint already belongs to session ${holder.id}',
+        );
+      }
     }
+    final platform = TargetPlatform.values.byName(args.text('platform'));
+    platform.requireHost();
     final project = p.normalize(
       Directory(args.text('project', fallback: tools.fixture)).absolute.path,
     );
@@ -401,24 +463,25 @@ class Sessions {
           ? platform == TargetPlatform.android
                 ? 'tool/automation/android_mcp.dart'
                 : 'tool/automation/main.dart'
-          : platform == TargetPlatform.windows
-          ? 'lib/driver_main.dart'
-          : 'lib/android_driver_main.dart',
+          : platform.entrypoint,
     );
-    final serial = platform == TargetPlatform.android
-        ? args.text('deviceId')
-        : null;
-    final package = platform == TargetPlatform.android
+    final serial = platform.isMobile ? args.text('deviceId') : null;
+    final package = platform.isMobile
         ? args.text(
             'package',
-            fallback: protocol == HookProtocol.booruflow
+            fallback: platform == TargetPlatform.ios
+                ? 'dev.flutter.flutterCaptureLab'
+                : protocol == HookProtocol.booruflow
                 ? 'io.github.normalllll.booruflow.automation'
                 : 'dev.flutter.flutter_capture_lab',
           )
         : null;
-    final android = serial == null
+    final android = platform != TargetPlatform.android
         ? null
-        : AndroidDevice(host, tools, serial, package!);
+        : AndroidDevice(host, tools, serial!, package!);
+    final unixTarget = platform.isUnixTarget
+        ? UnixTarget(host, tools, platform, deviceId: serial, bundleId: package)
+        : null;
     final directory = Directory(p.join(tools.artifacts, 'sessions', id));
     await directory.create(recursive: true);
     final leaseKey = sha256
@@ -441,15 +504,30 @@ class Sessions {
     final owner = _leaseOwner(id);
     try {
       await claim.create(exclusive: true);
+    } on FileSystemException {
+      throw const AutomationError('session_leased', 'Target is already leased');
+    }
+    try {
       await claim.writeAsString(jsonEncode(owner));
     } catch (_) {
-      throw const AutomationError('session_leased', 'Target is already leased');
+      // Creation succeeded, so this incomplete claim belongs to this call.
+      // A failed write must not strand an unreadable lease indefinitely.
+      try {
+        await claim.delete();
+        await lease.delete();
+      } on FileSystemException catch (cleanup) {
+        stderr.writeln('Incomplete lease cleanup: $cleanup');
+      }
+      rethrow;
     }
     FlutterProcess? resident;
     Process? executableProcess;
     FlutterConnection? connection;
     Session? session;
+    UnixIdentity? launchedIdentity;
     try {
+      await unixTarget?.ready(cancellation);
+      if (!attach) await unixTarget?.requireStopped(cancellation);
       if (android != null) {
         await android.ready(cancellation);
         if (!attach && await android.identity() != null) {
@@ -462,6 +540,99 @@ class Sessions {
       String uri;
       if (attach) {
         uri = args.text('vmUri');
+      } else if (platform == TargetPlatform.macos) {
+        if (!fixture) {
+          throw const AutomationError(
+            'unsafe_launch',
+            'Attach explicitly to non-fixture macOS applications',
+          );
+        }
+        // Flutter's macOS run path deliberately invokes `open` to foreground
+        // the app. Build, launch the test bundle directly, then attach instead.
+        await host.run(
+          tools.dart,
+          tools.flutter([
+            'build',
+            'macos',
+            '--debug',
+            '--no-pub',
+            '-t',
+            entrypoint,
+          ]),
+          directory: project,
+          timeout: const Duration(minutes: 15),
+          cancellation: cancellation,
+        );
+        final executable = p.join(
+          project,
+          'build',
+          'macos',
+          'Build',
+          'Products',
+          'Debug',
+          'flutter_capture_lab.app',
+          'Contents',
+          'MacOS',
+          'flutter_capture_lab',
+        );
+        executableProcess = await host.start(
+          executable,
+          [],
+          extraEnvironment: {
+            'CAPTURE_LAB_AUTOMATION': '1',
+            'FLUTTER_ENGINE_SWITCHES': '1',
+            'FLUTTER_ENGINE_SWITCH_1': 'vm-service-port=0',
+          },
+        );
+        final vm = Completer<String>();
+        final log = File(p.join(directory.path, 'app.log')).openWrite();
+        void observe(String line) {
+          log.writeln(line);
+          final match = RegExp(
+            r'The Dart VM service is listening on (http://\S+)',
+          ).firstMatch(line);
+          if (match != null && !vm.isCompleted) vm.complete(match[1]!);
+        }
+
+        final out = executableProcess.stdout
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .forEach(observe);
+        final errors = executableProcess.stderr
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .forEach(observe);
+        unawaited(
+          executableProcess.exitCode.then((code) async {
+            await Future.wait([out, errors]);
+            await log.close();
+            if (!vm.isCompleted) {
+              vm.completeError(
+                AutomationError('launch_failed', 'macOS app exited $code'),
+              );
+            }
+          }),
+        );
+        uri = await cancellation.wait(
+          vm.future.timeout(const Duration(seconds: 50)),
+        );
+        resident = await _flutter(
+          [
+            'attach',
+            '--machine',
+            '--debug-uri',
+            uri,
+            '-d',
+            'macos',
+            '-t',
+            entrypoint,
+          ],
+          project,
+          directory,
+          {},
+          cancellation,
+        );
+        uri = resident.vmUri!;
       } else if (args['executable'] case final String executable) {
         if (platform != TargetPlatform.windows ||
             protocol != HookProtocol.booruflow) {
@@ -516,16 +687,19 @@ class Sessions {
           if (match != null && !vm.isCompleted) vm.complete(match[1]!);
         }
 
-        executableProcess.stdout
+        final out = executableProcess.stdout
             .transform(utf8.decoder)
             .transform(const LineSplitter())
-            .listen(line);
-        executableProcess.stderr
+            .forEach(line);
+        final errors = executableProcess.stderr
             .transform(utf8.decoder)
             .transform(const LineSplitter())
-            .listen(line);
+            .forEach(line);
         unawaited(
           executableProcess.exitCode.then((code) async {
+            // Drain buffered output before closing; a late write to a closed
+            // sink would be an uncaught error that ends the whole service.
+            await Future.wait([out, errors]);
             await log.close();
             if (!vm.isCompleted) {
               vm.completeError(
@@ -580,7 +754,9 @@ class Sessions {
             );
           }
         }
-        final env = <String, String>{};
+        final env = <String, String>{
+          if (platform.isUnixTarget) 'CAPTURE_LAB_AUTOMATION': '1',
+        };
         if (platform == TargetPlatform.windows) {
           env['CAPTURE_LAB_PLACEMENT'] = args.text(
             'placement',
@@ -598,7 +774,7 @@ class Sessions {
             '--machine',
             '--no-pub',
             '-d',
-            serial ?? 'windows',
+            serial ?? platform.device,
             '-t',
             entrypoint,
             if (renderer == 'software') ...[
@@ -614,11 +790,39 @@ class Sessions {
         );
         uri = resident.vmUri!;
       }
+      cancellation.check();
       connection = FlutterConnection(official, uri, protocol);
-      await connection.connect();
+      await connection.connect(
+        validateProcess: unixTarget == null
+            ? null
+            : (pid) async {
+                final identity = UnixIdentity.read(pid);
+                if (identity == null) {
+                  throw const AutomationError(
+                    'target_unavailable',
+                    'Cannot inspect VM process',
+                  );
+                }
+                unixTarget.expectedIdentity = identity;
+                await unixTarget.validateInstance(cancellation: cancellation);
+                if (!attach) launchedIdentity = identity;
+              },
+      );
       final state = await connection.state();
       final native = state.child('native');
       if (android != null) await android.validateInstance(native, cancellation);
+      final unixIdentity = unixTarget?.expectedIdentity;
+      if (platform.isUnixTarget && unixIdentity == null) {
+        throw const AutomationError(
+          'target_unavailable',
+          'Cannot inspect native process identity',
+        );
+      }
+      await unixTarget?.validateInstance(
+        native: native,
+        cancellation: cancellation,
+      );
+      if (!attach) launchedIdentity = unixIdentity;
       final windowsIdentity = platform == TargetPlatform.windows
           ? WindowsApi().identity(native.integer('pid'))
           : null;
@@ -641,30 +845,92 @@ class Sessions {
         flutter: resident,
         executableProcess: executableProcess,
         windowsIdentity: windowsIdentity,
+        unixTarget: unixTarget,
+        unixIdentity: unixIdentity,
       );
       session.androidIdentity = await android?.identity();
       session.lastState = state;
+      // Connecting does not observe cancellation. Re-check before publishing
+      // so a cancelled start never leaves a live session behind it.
+      cancellation.check();
       await session.save();
       active[id] = session;
       return session;
-    } catch (error) {
-      try {
-        await connection?.disconnect();
-      } catch (_) {}
-      if (resident != null && !resident.exited) {
+    } catch (error, stack) {
+      final cleanupErrors = <String>[];
+      Future<void> step(String label, Future<void> Function() action) async {
         try {
-          await resident.request(
+          await action();
+        } catch (e) {
+          cleanupErrors.add('$label: $e');
+        }
+      }
+
+      await step('Disconnect', () async => connection?.disconnect());
+      if (resident != null && !resident.exited) {
+        final controller = resident;
+        await step(
+          'Controller stop',
+          () => controller.request(
             executableProcess == null ? 'app.stop' : 'app.detach',
-          );
-        } catch (_) {}
-        resident.process.kill();
-        await resident.process.exitCode;
+          ),
+        );
+        await step('Controller exit', () => host.terminate(controller.process));
       }
       if (executableProcess != null) {
-        executableProcess.kill();
-        await executableProcess.exitCode;
+        final app = executableProcess;
+        await step('App exit', () => host.terminate(app));
       }
-      await _releaseLease(lease, owner);
+      final ownedIdentity = launchedIdentity;
+      if (ownedIdentity != null &&
+          ownedIdentity.same(UnixIdentity.read(ownedIdentity.pid))) {
+        // Controller exit does not imply app exit. A failure while saving or
+        // publishing the session must roll back the verified native instance.
+        await step('Native rollback', () async {
+          await unixTarget!.validateInstance();
+          if (platform == TargetPlatform.ios) {
+            await unixTarget.simctl(['terminate', serial!, package!]);
+            await until(
+              () async =>
+                  !ownedIdentity.same(UnixIdentity.read(ownedIdentity.pid)),
+              (gone) => gone,
+            );
+          } else {
+            await ownedIdentity.terminate();
+          }
+        });
+      }
+      if (!attach && android != null && resident != null) {
+        // Start refused a running app before launching, so an instance after
+        // this call's own launch is the one it owns.
+        await step('Android rollback', () async {
+          if (await android.identity() != null) {
+            await android.command([
+              'shell',
+              'am',
+              'force-stop',
+              android.package,
+            ]);
+          }
+        });
+      }
+      // The lease is released even when a rollback step failed; the errors
+      // are reported with the original failure instead of stranding it.
+      await step('Lease release', () => _releaseLease(lease, owner));
+      if (cleanupErrors.isNotEmpty) {
+        await File(p.join(directory.path, 'start-cleanup.json')).writeAsString(
+          jsonEncode({'error': '$error', 'cleanup': cleanupErrors}),
+        );
+        if (error is AutomationError) {
+          Error.throwWithStackTrace(
+            AutomationError(error.code, error.message, {
+              ...error.detail,
+              'cleanupErrors': cleanupErrors,
+            }),
+            stack,
+          );
+        }
+      }
       rethrow;
     }
   }
@@ -676,31 +942,66 @@ class Sessions {
       await _requireLeaseOwner(session.lease, owner);
     }
     final errors = <String>[];
+    var observed = false;
     Json state = session.lastState;
     try {
       state = await session.state();
+      observed = true;
     } catch (e) {
       errors.add('State unavailable during cleanup: $e');
     }
     // Failed state observation can mean a destroyed HWND, an exited process,
     // or a replacement instance. Only the first two permit owned cleanup.
-    await _requireCleanupTarget(session);
-    for (final restore in <Future<Json> Function()>[
+    final targetAlive = await _requireCleanupTarget(session);
+    if (!targetAlive) {
+      // An exited attached app has no remaining temporary modes to restore.
+      session.simulated = session.orientationChanged = session.textEmulation =
+          false;
+    }
+    for (final restore in <Future<void> Function()>[
       if (session.simulated)
-        () => session.connection.hook('pretendForeground', {'enabled': false}),
+        () async {
+          await session.connection.hook('pretendForeground', {
+            'enabled': false,
+          });
+          session.simulated = false;
+        },
       if (session.orientationChanged)
-        () => session.connection.hook('orientation', {'value': 'restore'}),
+        () async {
+          await session.connection.orientation('restore');
+          session.orientationChanged = false;
+        },
       if (session.textEmulation)
-        () => session.connection.driver({
-          'command': 'set_text_entry_emulation',
-          'enabled': 'false',
-        }),
+        () async {
+          await session.connection.driver({
+            'command': 'set_text_entry_emulation',
+            'enabled': 'false',
+          });
+          session.textEmulation = false;
+        },
     ]) {
       try {
+        if (!observed) {
+          throw const AutomationError(
+            'target_unavailable',
+            'Cannot restore modes through an unverified VM endpoint',
+          );
+        }
         await restore();
       } catch (e) {
         errors.add('Restore: $e');
       }
+    }
+    if (!session.owned &&
+        (session.simulated ||
+            session.orientationChanged ||
+            session.textEmulation)) {
+      await session.save();
+      throw AutomationError(
+        'cleanup_incomplete',
+        'Attached app modes could not be restored; session and lease retained for retry',
+        {'cleanupErrors': errors},
+      );
     }
     // Release the service's debugger connection while the engine can still
     // acknowledge it. Window destruction and process teardown are distinct.
@@ -709,8 +1010,25 @@ class Sessions {
     } catch (e) {
       errors.add('Disconnect: $e');
     }
-    if (session.owned) {
-      await _requireCleanupTarget(session);
+    final ownedAlive = session.owned && await _requireCleanupTarget(session);
+    if (session.owned && !ownedAlive) {
+      // The owned instance already exited, possibly with its PID or package now
+      // used by a replacement. The controller's own stop path would act on the
+      // replacement (Android force-stops the package), so end it without
+      // letting it run app cleanup.
+      final controller = session.flutter;
+      if (controller != null && !controller.exited) {
+        controller.process.kill(ProcessSignal.sigkill);
+        try {
+          await controller.process.exitCode.timeout(
+            const Duration(seconds: 10),
+          );
+        } on TimeoutException {
+          errors.add('Controller did not exit after SIGKILL');
+        }
+      }
+    }
+    if (ownedAlive) {
       try {
         await session.flutter?.request(
           session.executableProcess != null ? 'app.detach' : 'app.stop',
@@ -739,7 +1057,7 @@ class Sessions {
             if (e.code != 'target_changed') rethrow;
           }
         }
-      } else {
+      } else if (session.platform == TargetPlatform.android) {
         final current = await session.android!.identity();
         if (current?['pid'] == session.androidIdentity?['pid'] &&
             current?['startTicks'] == session.androidIdentity?['startTicks']) {
@@ -754,25 +1072,57 @@ class Sessions {
             session.android!.package,
           ]);
         }
+      } else {
+        final expected = session.unixIdentity!;
+        if (expected.same(UnixIdentity.read(expected.pid))) {
+          // A kernel identity check is mandatory before the owned fallback.
+          if (session.platform == TargetPlatform.ios) {
+            await session.unixTarget!.simctl([
+              'terminate',
+              session.deviceId!,
+              session.package!,
+            ]);
+          } else {
+            await expected.terminate();
+          }
+        }
       }
-      await until(
-        () async => session.platform == TargetPlatform.windows
-            ? !session.windowsIdentity!.same(
-                WindowsApi().identity(session.windowsIdentity!.pid),
-              )
-            : (await session.android!.identity())?['pid'] !=
-                  session.androidIdentity?['pid'],
-        (gone) => gone,
-        description: 'owned app exit',
-      );
+      Future<bool> gone() async {
+        if (session.platform == TargetPlatform.windows) {
+          return !session.windowsIdentity!.same(
+            WindowsApi().identity(session.windowsIdentity!.pid),
+          );
+        }
+        if (session.platform == TargetPlatform.android) {
+          final current = await session.android!.identity();
+          return current?['pid'] != session.androidIdentity?['pid'] ||
+              current?['startTicks'] != session.androidIdentity?['startTicks'];
+        }
+        return !session.unixIdentity!.same(
+          UnixIdentity.read(session.unixIdentity!.pid),
+        );
+      }
+
+      try {
+        await until(gone, (gone) => gone, description: 'owned app exit');
+      } on AutomationError catch (e) {
+        // An owned Windows app that ignores WM_CLOSE would otherwise make every
+        // stop time out. Force only the verified instance this session started.
+        if (e.code != 'timeout' ||
+            session.platform != TargetPlatform.windows ||
+            !WindowsApi().terminate(session.windowsIdentity!)) {
+          rethrow;
+        }
+        errors.add('Owned app ignored close; terminated verified instance');
+        await until(gone, (gone) => gone, description: 'owned app exit');
+      }
       if (session.flutter != null) {
         try {
           await session.flutter!.process.exitCode.timeout(
             const Duration(seconds: 10),
           );
         } on TimeoutException {
-          session.flutter!.process.kill();
-          await session.flutter!.process.exitCode;
+          await host.terminate(session.flutter!.process);
         }
       }
     }
@@ -781,8 +1131,8 @@ class Sessions {
     } catch (e) {
       errors.add('Disconnect: $e');
     }
-    session.closing = true;
     await _releaseLease(session.lease, owner);
+    session.closing = true;
     active.remove(id);
     await writeJson(File(p.join(session.directory.path, 'closed.json')), {
       'sessionId': id,
@@ -823,14 +1173,14 @@ class Sessions {
       throw const AutomationError('no_session', 'No retained session metadata');
     }
     final data = decodeObject(await file.readAsString());
-    if (!Platform.isWindows) {
-      throw const AutomationError(
-        'unsupported_host',
-        'Recovery currently requires Windows process creation-time identity',
-      );
-    }
-    final supervisor = _identity(data.child('supervisor'));
-    if (supervisor.same(WindowsApi().identity(supervisor.pid))) {
+    final supervisorData = data.child('supervisor');
+    final supervisorPid = supervisorData.integer('pid');
+    final supervisorAlive = Platform.isWindows
+        ? _identity(supervisorData).same(WindowsApi().identity(supervisorPid))
+        : UnixIdentity.fromJson(
+            supervisorData,
+          ).same(UnixIdentity.read(supervisorPid));
+    if (supervisorAlive) {
       throw const AutomationError(
         'supervisor_live',
         'The original service is still running',
@@ -848,8 +1198,8 @@ class Sessions {
     }
     final owner = {
       'sessionId': id,
-      'pid': supervisor.pid,
-      'identity': supervisor.toJson(),
+      'pid': supervisorPid,
+      'identity': supervisorData,
     };
     // Retained session metadata outlives its lease. Establish authority before
     // connecting, restoring modes, or stopping an app described by that metadata.
@@ -859,10 +1209,12 @@ class Sessions {
     var alive = false;
     AndroidDevice? device;
     WindowsIdentity? target;
+    UnixIdentity? unixIdentity;
+    UnixTarget? unixTarget;
     if (platform == TargetPlatform.windows) {
       target = _identity(data.child('windowsIdentity'));
       alive = target.same(WindowsApi().identity(target.pid));
-    } else {
+    } else if (platform == TargetPlatform.android) {
       device = AndroidDevice(
         host,
         tools,
@@ -875,6 +1227,21 @@ class Sessions {
           current?['startTicks'] == data.child('androidIdentity')['startTicks'];
       if (alive) {
         await device.validateInstance(data.child('native'), Cancellation());
+      }
+    } else {
+      platform.requireHost();
+      unixIdentity = UnixIdentity.fromJson(data.child('unixIdentity'));
+      alive = unixIdentity.same(UnixIdentity.read(unixIdentity.pid));
+      unixTarget = UnixTarget(
+        host,
+        tools,
+        platform,
+        deviceId: data['deviceId'] as String?,
+        bundleId: data['package'] as String?,
+      );
+      unixTarget.expectedIdentity = unixIdentity;
+      if (alive) {
+        await unixTarget.validateInstance(native: data.child('native'));
       }
     }
     if (alive && own && !stopOwned) {
@@ -893,12 +1260,42 @@ class Sessions {
         HookProtocol.values.byName(data.text('hooks')),
       );
       try {
-        await connection.connect();
+        await connection.connect(
+          validateProcess: unixTarget == null
+              ? null
+              : (pid) async {
+                  if (pid != unixIdentity!.pid) {
+                    throw const AutomationError(
+                      'target_changed',
+                      'Retained VM endpoint changed',
+                    );
+                  }
+                  await unixTarget!.validateInstance();
+                },
+        );
+        final native = (await connection.state()).child('native');
+        if (unixTarget != null) {
+          await unixTarget.validateInstance(native: native);
+        } else if (device != null) {
+          await device.validateInstance(native, Cancellation());
+          if (native['pid'] != data.child('androidIdentity')['pid']) {
+            throw const AutomationError(
+              'target_changed',
+              'Retained VM endpoint changed',
+            );
+          }
+        } else if (native['pid'] != target!.pid ||
+            !target.same(WindowsApi().identity(target.pid))) {
+          throw const AutomationError(
+            'target_changed',
+            'Retained VM endpoint changed',
+          );
+        }
         if (data.flag('simulated')) {
           await connection.hook('pretendForeground', {'enabled': false});
         }
         if (data.flag('orientationChanged')) {
-          await connection.hook('orientation', {'value': 'restore'});
+          await connection.orientation('restore');
         }
         if (data.flag('textEmulation')) {
           await connection.driver({
@@ -909,7 +1306,18 @@ class Sessions {
       } catch (e) {
         errors.add('Restore: $e');
       } finally {
-        await connection.disconnect();
+        try {
+          await connection.disconnect();
+        } catch (e) {
+          errors.add('Disconnect: $e');
+        }
+      }
+      if (!own && errors.isNotEmpty) {
+        throw AutomationError(
+          'cleanup_incomplete',
+          'Attached app recovery failed; lease retained for retry',
+          {'cleanupErrors': errors},
+        );
       }
       if (own) {
         if (target != null) {
@@ -928,9 +1336,26 @@ class Sessions {
             (gone) => gone,
             description: 'recovered owned app exit',
           );
-        } else {
-          await device!.validateInstance(data.child('native'), Cancellation());
+        } else if (device != null) {
+          await device.validateInstance(data.child('native'), Cancellation());
           await device.command(['shell', 'am', 'force-stop', device.package]);
+        } else {
+          unixIdentity!.requireCurrent();
+          if (platform == TargetPlatform.ios) {
+            await unixTarget!.validateInstance();
+            await unixTarget.simctl([
+              'terminate',
+              unixTarget.deviceId!,
+              unixTarget.bundleId!,
+            ]);
+          } else {
+            await unixIdentity.terminate();
+          }
+          await until(
+            () async =>
+                !unixIdentity!.same(UnixIdentity.read(unixIdentity.pid)),
+            (gone) => gone,
+          );
         }
       }
     }

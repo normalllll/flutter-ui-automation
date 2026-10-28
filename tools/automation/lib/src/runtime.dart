@@ -13,6 +13,7 @@ import 'pixels.dart';
 import 'protocol.dart';
 import 'sessions.dart';
 import 'windows.dart';
+import 'unix_target.dart';
 
 part 'verification.dart';
 
@@ -52,7 +53,7 @@ final toolDefinitions = <Json>[
     'automation_verify_cold',
     'Explicit offline fixture cold-start verification. Cycles 1..5, different monitor placement, exact presentation fences and bounded never-presented token rejection. Stops only the instances created by this check. No network app.',
     {
-      'platform': string(['windows', 'android']),
+      'platform': string(TargetPlatform.values.map((p) => p.name).toList()),
       'deviceId': string(),
       'cycles': numeric(1, 5, integer: true),
       'job': boolean(),
@@ -74,7 +75,7 @@ final toolDefinitions = <Json>[
         'hotRestart',
       ]),
       'sessionId': string(),
-      'platform': string(['windows', 'android']),
+      'platform': string(TargetPlatform.values.map((p) => p.name).toList()),
       'project': string(),
       'entrypoint': string(),
       'deviceId': string(),
@@ -136,7 +137,7 @@ final toolDefinitions = <Json>[
   ),
   definition(
     'automation_capture',
-    'Capture original app PNG and/or independent Windows HWND/Android display PNG. Each channel has its own result and retained failed attempt. Retry only a failed channel. Foreground observations never invalidate pixels.',
+    'Capture original app PNG and/or independent Windows, Linux X11, macOS window or Android/iOS Simulator display PNG. Each channel has its own result and retained failed attempt. Retry only a failed channel. Foreground observations never invalidate pixels.',
     {
       'sessionId': string(),
       'channels': {
@@ -179,7 +180,7 @@ final toolDefinitions = <Json>[
     'automation_build',
     'Build the offline fixture or a specified Flutter test project. Retains build log. No app launch, global focus, or desktop input. Returns a job by default.',
     {
-      'platform': string(['windows', 'android']),
+      'platform': string(TargetPlatform.values.map((p) => p.name).toList()),
       'project': string(),
       'entrypoint': string(),
       'job': boolean(),
@@ -188,10 +189,16 @@ final toolDefinitions = <Json>[
   ),
   definition(
     'automation_verify',
-    'Offline fixture walkthrough: navigation, Unicode, modal barrier, scroll, animation, real Android keyboard/lifecycle/orientation and hot reload/restart. Per-item evidence and retryable captures. Never runs this sequence on a network app. Returns a job by default.',
+    'Offline fixture walkthrough: navigation, Unicode, modal barrier, scroll, animation, mobile keyboard/lifecycle/orientation and hot reload/restart. Select capture channels explicitly for partial capability checks. Never runs this sequence on a network app. Returns a job by default.',
     {
       'sessionId': string(),
       'record': boolean(),
+      'channels': {
+        'type': 'array',
+        'items': string(['app', 'native']),
+        'minItems': 1,
+        'uniqueItems': true,
+      },
       'checks': {
         'type': 'array',
         'items': string([
@@ -238,6 +245,10 @@ final toolDefinitions = <Json>[
     'Decode a retained video and measure motion only inside an optional content region, excluding unrelated clocks and presentation markers.',
     {
       'path': string(),
+      'rotationDegrees': {
+        'type': 'integer',
+        'enum': [0, 90, 180, 270],
+      },
       'region': {
         'type': 'object',
         'properties': {
@@ -282,6 +293,11 @@ class AutomationRuntime {
   final jobs = <String, Job>{};
   final _queues = <String, Future<void>>{};
   final _recording = <String>{};
+  final _stopping = <String>{};
+  // A record job runs on its own queue; count it from enqueue, not only once
+  // record() has started, so stop/hotRestart cannot slip in between.
+  bool _recordActive(String id) =>
+      _recording.contains(id) || _queues.containsKey('record/$id');
   final _running = <Cancellation>{};
   bool closing = false;
   void Function()? onStop;
@@ -310,6 +326,9 @@ class AutomationRuntime {
       return toolResult(
         await media.inspect(
           args.text('path'),
+          rotation: CaptureRotation.fromDegrees(
+            args.integer('rotationDegrees', fallback: 0),
+          ),
           region: args['region'] == null ? null : args.child('region'),
           cancellation: cancellation,
         ),
@@ -398,18 +417,15 @@ class AutomationRuntime {
     }
     if (name == 'automation_build') {
       final platform = TargetPlatform.values.byName(args.text('platform'));
+      platform.requireHost();
       final project = args.text('project', fallback: tools.fixture);
-      final target = args.text(
-        'entrypoint',
-        fallback: platform == TargetPlatform.windows
-            ? 'lib/driver_main.dart'
-            : 'lib/android_driver_main.dart',
-      );
+      final target = args.text('entrypoint', fallback: platform.entrypoint);
       final result = await host.run(
         tools.dart,
         tools.flutter([
           'build',
-          platform == TargetPlatform.windows ? 'windows' : 'apk',
+          platform.buildTarget,
+          if (platform == TargetPlatform.ios) '--simulator',
           '--debug',
           '-t',
           target,
@@ -456,13 +472,18 @@ class AutomationRuntime {
             'sessions': sessions.active.values.map((s) => s.toJson()).toList(),
           });
         case 'stop':
-          if (_recording.contains(id)) {
+          if (_recordActive(id)) {
             throw const AutomationError(
               'session_busy',
               'Cancel or finish the recording before stopping its app',
             );
           }
-          return toolResult(await sessions.close(id));
+          _stopping.add(id);
+          try {
+            return toolResult(await sessions.close(id));
+          } finally {
+            _stopping.remove(id);
+          }
         case 'recover':
           return toolResult(
             await sessions.recover(id, stopOwned: args.flag('stopOwned')),
@@ -471,7 +492,7 @@ class AutomationRuntime {
           return toolResult(await sessions.get(id).state());
         case 'hotReload':
         case 'hotRestart':
-          if (_recording.contains(id) && args['action'] == 'hotRestart') {
+          if (_recordActive(id) && args['action'] == 'hotRestart') {
             throw const AutomationError(
               'session_busy',
               'Cancel or finish the recording before hot restart',
@@ -487,7 +508,14 @@ class AutomationRuntime {
           return toolResult(session.toJson());
       }
     }
-    final session = sessions.get(args.text('sessionId', fallback: 'default'));
+    final sessionId = args.text('sessionId', fallback: 'default');
+    if (name == 'automation_record' && _stopping.contains(sessionId)) {
+      throw const AutomationError(
+        'session_closing',
+        'Session is stopping; recording was not started',
+      );
+    }
+    final session = sessions.get(sessionId);
     await session.state();
     return switch (name) {
       'automation_drive' => toolResult(
@@ -505,6 +533,22 @@ class AutomationRuntime {
         'Unknown automation tool $name',
       ),
     };
+  }
+
+  /// Hooks that change a reversible app mode must go through their tracked
+  /// actions; raw requests would leave stop/recover unaware of the change.
+  static void _requireUntrackedHook(String hook) {
+    const tracked = {
+      'pretendForeground': 'foreground',
+      'orientation': 'orientation',
+    };
+    final action = tracked[hook];
+    if (action != null) {
+      throw AutomationError(
+        'tracked_mode',
+        'Use action $action so stop and recover can restore it',
+      );
+    }
   }
 
   Future<Json> drive(
@@ -590,10 +634,10 @@ class AutomationRuntime {
         });
         session.simulated = enabled;
       case 'orientation':
-        if (session.platform != TargetPlatform.android) {
+        if (!session.platform.isMobile) {
           throw const AutomationError(
             'unsupported_platform',
-            'Orientation applies only to Android',
+            'Orientation applies only to mobile targets',
           );
         }
         final value = args.text('value');
@@ -607,7 +651,10 @@ class AutomationRuntime {
           session.orientationChanged = true;
           await session.save();
         }
-        result = await connection.hook('orientation', {'value': value});
+        result = await connection.orientation(
+          value,
+          cancellation: cancellation,
+        );
         session.orientationChanged = value != 'restore';
         if (value != 'restore') {
           await until(session.state, (s) {
@@ -622,10 +669,23 @@ class AutomationRuntime {
       case 'resume':
         final device = session.android;
         if (device == null) {
-          throw const AutomationError(
-            'unsupported_platform',
-            'Native lifecycle actions require Android',
-          );
+          await session.unixTarget?.lifecycle(action, cancellation);
+          if (session.unixTarget == null) {
+            throw const AutomationError(
+              'unsupported_platform',
+              'Native lifecycle unavailable',
+            );
+          }
+          return {
+            'action': action,
+            'complete': true,
+            'state': await until<Json>(
+              session.state,
+              (state) =>
+                  state.child('native')['isForeground'] == (action == 'resume'),
+              cancellation: cancellation,
+            ),
+          };
         }
         if (action == 'back') await device.back(cancellation);
         if (action == 'background') await device.background(cancellation);
@@ -647,12 +707,33 @@ class AutomationRuntime {
           'y': args.number('y'),
         });
       case 'request':
+        _requireUntrackedHook(args.text('value'));
         result = await connection.hook(
           args.text('value'),
           args['arguments'] == null ? {} : args.child('arguments'),
         );
       case 'driver':
-        result = await connection.driver(args.child('arguments'));
+        final command = args.child('arguments');
+        if (command['command'] == 'set_text_entry_emulation') {
+          throw const AutomationError(
+            'tracked_mode',
+            'Use action textEmulation so stop and recover can restore it',
+          );
+        }
+        if (command['command'] == 'request_data' &&
+            command['message'] is String) {
+          try {
+            final message = decodeObject(command.text('message'));
+            if (message['command'] case final String hook) {
+              _requireUntrackedHook(hook);
+            }
+          } on FormatException {
+            /* Not a fixture hook request; forward unchanged. */
+          } on AutomationError catch (e) {
+            if (e.code == 'tracked_mode') rethrow;
+          }
+        }
+        result = await connection.driver(command);
       default:
         throw AutomationError('invalid_action', 'Unknown drive action $action');
     }
@@ -678,7 +759,18 @@ class AutomationRuntime {
 
   Future<Json> _item(String channel, Future<Json> Function() action) async {
     try {
-      return {'channel': channel, 'passed': true, 'result': await action()};
+      final result = await action();
+      final passed = result['timingPassed'] != false;
+      return {
+        'channel': channel,
+        'passed': passed,
+        'result': result,
+        if (!passed)
+          'error': const AutomationError(
+            'timing_mismatch',
+            'Capture exceeded the requested acquisition duration; original media retained',
+          ).toJson(),
+      };
     } catch (e) {
       return {
         'channel': channel,
@@ -697,6 +789,34 @@ class AutomationRuntime {
       };
     }
   }
+
+  Future<Json> nativeScreenshot(
+    Session session,
+    String path,
+    Json native, {
+    Json? probe,
+    String backend = 'wgc',
+    required Cancellation cancellation,
+  }) => switch (session.platform) {
+    TargetPlatform.windows => WindowsCapture(host, tools).screenshot(
+      path,
+      native,
+      probe: probe,
+      backend: backend,
+      cancellation: cancellation,
+    ),
+    TargetPlatform.android => session.android!.screenshot(
+      path,
+      probe: probe,
+      cancellation: cancellation,
+    ),
+    _ => session.unixTarget!.screenshot(
+      path,
+      native,
+      probe: probe,
+      cancellation: cancellation,
+    ),
+  };
 
   Future<Json> capture(
     Session session,
@@ -731,20 +851,19 @@ class AutomationRuntime {
                   'settle': args.flag('settle', fallback: true),
                 })
               : null;
-          final native = (await session.state()).child('native');
-          return session.platform == TargetPlatform.windows
-              ? WindowsCapture(host, tools).screenshot(
-                  p.join(directory, 'native.png'),
-                  native,
-                  probe: probe,
-                  backend: args.text('backend', fallback: 'wgc'),
-                  cancellation: cancellation,
-                )
-              : session.android!.screenshot(
-                  p.join(directory, 'native.png'),
-                  probe: probe,
-                  cancellation: cancellation,
-                );
+          try {
+            final native = (await session.state()).child('native');
+            return await nativeScreenshot(
+              session,
+              p.join(directory, 'native.png'),
+              native,
+              probe: probe,
+              backend: args.text('backend', fallback: 'wgc'),
+              cancellation: cancellation,
+            );
+          } finally {
+            await session.connection.releaseCapture(probe);
+          }
         }),
       );
     }
@@ -758,7 +877,7 @@ class AutomationRuntime {
           final comparison = await compareCapture(
             results.first.child('result'),
             results[1].child('result'),
-            android: session.platform == TargetPlatform.android,
+            android: session.platform.isMobile,
             state: observation.child('state'),
           );
           if (comparison['passed'] != true) {
@@ -826,10 +945,7 @@ class AutomationRuntime {
               session,
               p.join(directory, 'app.mp4'),
               seconds,
-              args.number(
-                'fps',
-                fallback: session.platform == TargetPlatform.android ? 2 : 5,
-              ),
+              args.number('fps', fallback: session.platform.isMobile ? 2 : 5),
               cancellation,
             ),
           ),
@@ -846,18 +962,36 @@ class AutomationRuntime {
                     probe,
                     cancellation,
                   )
-                : media.androidRecording(
+                : session.platform == TargetPlatform.android
+                ? media.androidRecording(
                     session,
                     p.join(directory, 'native.mp4'),
                     seconds,
                     probe,
                     cancellation,
+                  )
+                : media.unixRecording(
+                    session,
+                    p.join(directory, 'native.mp4'),
+                    seconds,
+                    args.number(
+                      'nativeFps',
+                      fallback: session.platform == TargetPlatform.ios ? 1 : 2,
+                    ),
+                    probe,
+                    cancellation,
                   ),
           ),
       ];
+      final List<Json> items;
+      try {
+        items = await Future.wait(work);
+      } finally {
+        await session.connection.releaseCapture(probe);
+      }
       final report = {
         'directory': directory,
-        'items': await Future.wait(work),
+        'items': items,
         ...await _observe(session),
       };
       await writeJson(File(p.join(directory, 'record.json')), report);
@@ -902,6 +1036,48 @@ class AutomationRuntime {
         found['windowCapture'] = '$e';
       }
     }
+    final desktop = <String, Object?>{};
+    if (Platform.isLinux || Platform.isMacOS) {
+      final target = UnixTarget(
+        host,
+        tools,
+        Platform.isLinux ? TargetPlatform.linux : TargetPlatform.macos,
+      );
+      try {
+        found['nativeCapture'] = target.captureHelper;
+        if (Platform.isMacOS) {
+          desktop.addAll(
+            decodeObject(
+              (await host.run(target.captureHelper, [
+                '--preflight',
+              ], cancellation: cancellation)).text,
+            ),
+          );
+        }
+      } catch (error) {
+        desktop['captureError'] = '$error';
+      }
+      if (Platform.isLinux) {
+        desktop['display'] = host.environment['DISPLAY'];
+        desktop['waylandDisplay'] = host.environment['WAYLAND_DISPLAY'];
+        desktop['nativeCaptureBackend'] = 'X11 only';
+      }
+    }
+    Json simulators = {};
+    if (Platform.isMacOS) {
+      try {
+        simulators = decodeObject(
+          (await host.run('xcrun', [
+            'simctl',
+            'list',
+            'devices',
+            '-j',
+          ], cancellation: cancellation)).text,
+        );
+      } catch (error) {
+        simulators = {'error': '$error'};
+      }
+    }
     Json devices = {};
     try {
       devices = {
@@ -916,12 +1092,15 @@ class AutomationRuntime {
     return {
       'pid': pid,
       'runtime': 'Dart',
+      'hostPlatform': Platform.operatingSystem,
       'flutterRoot': tools.flutterRoot,
       'artifacts': tools.artifacts,
       'sessions': sessions.active.length,
       'jobs': jobs.length,
       'prerequisites': found,
       'android': devices,
+      'desktop': desktop,
+      'iosSimulators': simulators,
     };
   }
 

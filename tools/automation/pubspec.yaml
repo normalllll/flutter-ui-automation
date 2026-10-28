@@ -1,5 +1,5 @@
 name: flutter_ui_automation
-description: Persistent Windows and Android Flutter automation with embedded Dart MCP.
+description: Persistent cross-platform Flutter automation with embedded Dart MCP.
 version: 0.2.0
 publish_to: none
 environment:

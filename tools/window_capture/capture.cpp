@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -49,32 +50,67 @@ struct Probe {
         &capture_bounds, sizeof(capture_bounds)));
       if (capture_bounds.right - capture_bounds.left != frame.width ||
           capture_bounds.bottom - capture_bounds.top != frame.height) {
-        throw std::runtime_error("WGC bounds differ from DWM bounds; cannot locate presentation probe");
+        // Transient while the window resizes/settles DPI: reject this frame and
+        // keep waiting instead of aborting the bounded presentation wait.
+        return false;
       }
     } else if (!GetWindowRect(hwnd, &capture_bounds)) {
       throw std::runtime_error("Cannot locate capture bounds");
     }
     POINT origin{};
     if (!ClientToScreen(hwnd, &origin)) throw std::runtime_error("Cannot locate client origin");
+    // 8x4 dot matrix, row-major from the top-left: 1010, 24-bit token, 0101.
+    // Pink (1) and aqua (0) are calibrated from the header's own dots, so a
+    // uniform colour shift does not reject a presented probe.
     const uint32_t word = (0xau << 28) | (token << 4) | 0x5;
+    double samples[32][3];
     for (int bit = 0; bit < 32; ++bit) {
-      const int px = static_cast<int>(origin.x - capture_bounds.left + x + (bit + .5) * width / 32);
-      const int py = static_cast<int>(origin.y - capture_bounds.top + y + height / 2);
-      if (px < 0 || py < 0 || px >= frame.width || py >= frame.height) {
-        throw std::runtime_error("Presentation probe outside capture bounds");
+      const int column = bit % 8, row = bit / 8;
+      const int cx = static_cast<int>(origin.x - capture_bounds.left + x + (column + .5) * width / 8);
+      const int cy = static_cast<int>(origin.y - capture_bounds.top + y + (row + .5) * height / 4);
+      if (cx < 1 || cy < 1 || cx >= frame.width - 1 || cy >= frame.height - 1) {
+        return false;  // Geometry not settled yet; treat as an unpresented frame.
       }
-      const bool one = ((word >> (31 - bit)) & 1) != 0;
-      const bool payload = !exact_token && bit >= 4 && bit < 28;
-      const int expected[] = {one ? 0x29 : 0x4f, one ? 0xb4 : 0x32, one ? 0xf0 : 0x16};
-      const size_t offset = (static_cast<size_t>(py) * frame.width + px) * 4;
-      bool matches = true, matches_opposite = payload;
-      for (int channel = 0; channel < 3; ++channel) {
-        const int actual = frame.bytes[offset + channel];
-        if (std::abs(actual - expected[channel]) > 24) matches = false;
-        const int other[] = {one ? 0x4f : 0x29, one ? 0x32 : 0xb4, one ? 0x16 : 0xf0};
-        if (std::abs(actual - other[channel]) > 24) matches_opposite = false;
+      double sum[3] = {0, 0, 0};
+      for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+          const size_t offset = (static_cast<size_t>(cy + dy) * frame.width + (cx + dx)) * 4;
+          // BGRA to RGB.
+          sum[0] += frame.bytes[offset + 2];
+          sum[1] += frame.bytes[offset + 1];
+          sum[2] += frame.bytes[offset];
+        }
       }
-      if (!matches && !matches_opposite) return false;
+      for (int c = 0; c < 3; ++c) samples[bit][c] = sum[c] / 9;
+    }
+    return ProbeBitsMatch(samples, word, exact_token);
+  }
+
+  // Nominal RGB: 1 = #FF8FB1 (pink), 0 = #38BDD8 (aqua). Must match the
+  // fixture's LabProbe and tools/automation/lib/src/pixels.dart.
+  static bool ProbeBitsMatch(const double samples[32][3], uint32_t word, bool exact_token) {
+    static const double kOne[3] = {255, 143, 177}, kZero[3] = {56, 189, 216};
+    auto distance = [](const double* a, const double* b) {
+      double sum = 0;
+      for (int c = 0; c < 3; ++c) sum += (a[c] - b[c]) * (a[c] - b[c]);
+      return std::sqrt(sum);
+    };
+    if (distance(samples[0], samples[2]) > 40 || distance(samples[1], samples[3]) > 40) return false;
+    double one[3], zero[3];
+    for (int c = 0; c < 3; ++c) {
+      one[c] = (samples[0][c] + samples[2][c]) / 2;
+      zero[c] = (samples[1][c] + samples[3][c]) / 2;
+      if (std::abs(one[c] - kOne[c]) > 64 || std::abs(zero[c] - kZero[c]) > 64) return false;
+    }
+    const double separation = distance(one, zero);
+    if (separation < 90) return false;
+    for (int bit = 0; bit < 32; ++bit) {
+      const double to_one = distance(samples[bit], one), to_zero = distance(samples[bit], zero);
+      if ((to_one < to_zero ? to_one : to_zero) > separation * .45) return false;
+      // While recording, later screenshots may advance the token payload; keep
+      // validating the header, trailer and palette without pinning the payload.
+      if (!exact_token && bit >= 4 && bit < 28) continue;
+      if ((to_one < to_zero) != (((word >> (31 - bit)) & 1) != 0)) return false;
     }
     return true;
   }
@@ -132,8 +168,13 @@ class WgcCapture {
     session_.StartCapture();
   }
   ~WgcCapture() {
-    if (session_) session_.Close();
-    if (pool_) pool_.Close();
+    // Destructors are noexcept; a failing Close during unwinding must not
+    // terminate the helper before the original error reaches stderr.
+    try {
+      if (session_) session_.Close();
+      if (pool_) pool_.Close();
+    } catch (...) {
+    }
   }
 
   bool Read(Frame& out) {

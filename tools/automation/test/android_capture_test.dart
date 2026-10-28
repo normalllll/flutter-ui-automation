@@ -8,6 +8,7 @@ import 'package:flutter_ui_automation/src/host.dart';
 import 'package:flutter_ui_automation/src/protocol.dart';
 import 'package:image/image.dart' as image;
 import 'package:path/path.dart' as p;
+import 'package:flutter_ui_automation/src/pixels.dart';
 import 'package:test/test.dart';
 
 const _package = 'test.capture.fixture';
@@ -210,17 +211,7 @@ void main() {
     () async {
       Uint8List marker(int token) {
         final pixels = image.Image(width: 320, height: 50);
-        final word = (0xa << 28) | (token << 4) | 5;
-        for (var bit = 0; bit < 32; bit++) {
-          final color = word >> (31 - bit) & 1 == 1
-              ? [240, 180, 41]
-              : [22, 50, 79];
-          for (var y = 0; y < 8; y++) {
-            for (var x = bit * 10; x < (bit + 1) * 10; x++) {
-              pixels.setPixelRgb(x, y, color[0], color[1], color[2]);
-            }
-          }
-        }
+        paintProbe(pixels, _gridProbe, token: token);
         return image.encodePng(pixels);
       }
 
@@ -254,7 +245,7 @@ void main() {
             cancellation: Cancellation(),
             probe: {
               'token': 2,
-              'rect': {'x': 0, 'y': 0, 'width': 320, 'height': 8},
+              'rect': {'x': 0, 'y': 0, 'width': 96, 'height': 48},
               'pixelRatio': 1,
               'native': {
                 'viewBounds': {'x': 0, 'y': 0, 'width': 320, 'height': 50},
@@ -302,7 +293,7 @@ void main() {
           cancellation: Cancellation(),
           probe: {
             'token': 2,
-            'rect': {'x': 0, 'y': 0, 'width': 320, 'height': 8},
+            'rect': {'x': 0, 'y': 0, 'width': 96, 'height': 48},
             'pixelRatio': 1,
             'native': {
               'viewBounds': {'x': 0, 'y': 0, 'width': 320, 'height': 50},
@@ -347,3 +338,12 @@ void main() {
     expect(host.calls.any((a) => a.contains('screencap')), false);
   });
 }
+
+const _gridProbe = <String, Object?>{
+  'token': 0,
+  'rect': {'x': 0, 'y': 0, 'width': 96, 'height': 48},
+  'pixelRatio': 1,
+  'native': {
+    'viewBounds': {'x': 0, 'y': 0, 'width': 320, 'height': 50},
+  },
+};

@@ -47,17 +47,13 @@ Logical Displays:
     final pixels = image.Image(width: 400, height: 100);
     final probe = <String, Object?>{
       'token': token,
-      'rect': {'x': 0, 'y': 0, 'width': 320, 'height': 10},
+      'rect': {'x': 0, 'y': 0, 'width': 320, 'height': 40},
       'pixelRatio': 1,
       'native': {
         'viewBounds': {'x': 20, 'y': 30, 'width': 320, 'height': 50},
       },
     };
-    final word = (0xa << 28) | (token << 4) | 5;
-    for (var i = 0; i < 32; i++) {
-      final color = word >> (31 - i) & 1 == 1 ? [240, 180, 41] : [22, 50, 79];
-      pixels.setPixelRgb(20 + i * 10 + 5, 35, color[0], color[1], color[2]);
-    }
+    paintProbe(pixels, probe);
     expect(markerMatches(pixels, probe), true);
     expect(markerMatches(pixels, {...probe, 'token': token + 1}), false);
     expect(

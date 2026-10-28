@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'gateway.dart';
 import 'protocol.dart';
@@ -14,9 +15,12 @@ class FlutterConnection {
   int generation = 0;
   bool _connected = false;
 
-  Future<void> connect() async {
+  Future<void> connect({Future<void> Function(int)? validateProcess}) async {
     await bridge.tool('vm_service', {'command': 'connect', 'appUri': uri});
     _connected = true;
+    if (validateProcess != null) {
+      await validateProcess((await vm('getVM')).integer('pid'));
+    }
     await waitReady();
     await driver({'command': 'set_frame_sync', 'enabled': 'false'});
   }
@@ -100,6 +104,34 @@ class FlutterConnection {
   }
 
   Future<Json> state() => hook('state');
+
+  /// Ends the presentation hold returned by `prepareCapture`, so the probe is
+  /// hidden as soon as no capture needs it. Apps without hold support return
+  /// no `hold`; their probe still expires on its own timer.
+  Future<void> releaseCapture(Json? probe) async {
+    final hold = probe?['hold'];
+    if (hold is! int) return;
+    try {
+      await hook('releaseCapture', {'hold': hold});
+    } catch (e) {
+      // Best effort: the hold's own expiry still hides the probe.
+      stderr.writeln('Probe release: $e');
+    }
+  }
+
+  Future<Json> orientation(String value, {Cancellation? cancellation}) async {
+    final result = await hook('orientation', {'value': value});
+    if (result['restoredInterfaceOrientation'] case final int original) {
+      await until(
+        state,
+        (s) => s.child('native')['interfaceOrientation'] == original,
+        cancellation: cancellation,
+        description: 'original interface orientation',
+      );
+    }
+    return result;
+  }
+
   Future<Json> settle({bool enabled = true}) =>
       enabled && hooks == HookProtocol.fixture
       ? hook('settle')

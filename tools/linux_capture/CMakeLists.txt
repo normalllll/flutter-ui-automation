@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(linux_capture LANGUAGES CXX)
+find_package(X11 REQUIRED)
+find_package(PNG REQUIRED)
+add_executable(capture main.cc)
+target_compile_features(capture PRIVATE cxx_std_17)
+target_compile_options(capture PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(capture PRIVATE X11::X11 PNG::PNG)

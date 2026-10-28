@@ -542,7 +542,13 @@ Future<void> main(List<String> args) async {
       p.join(output.path, 'checks.json'),
     ).writeAsString(const JsonEncoder.withIndent('  ').convert(checks));
     await client.close();
-    await server.exitCode.timeout(const Duration(seconds: 90));
+    try {
+      await server.exitCode.timeout(const Duration(seconds: 90));
+    } on TimeoutException {
+      stderr.writeln('Server did not exit; killing it');
+      server.kill(ProcessSignal.sigkill);
+      await server.exitCode;
+    }
     await stderrDone;
     stdout.writeln('Evidence: ${output.path}');
   }

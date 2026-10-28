@@ -63,13 +63,19 @@ Future<void> run(List<String> arguments) async {
   final host = Host();
   late final AutomationRuntime runtime;
   late final Broker broker;
+  // A second MCP client for the same artifacts root forwards automation tools
+  // to the resident owner instead of exiting before the MCP handshake.
+  var forwarded = false;
   final local = command == 'serve' ? StreamChannelController<String>() : null;
   final gateway = AutomationGateway(
     local?.local ?? stdioChannel(input: stdin, output: stdout),
     flutterRoot: tools.flutterRoot,
     tools: toolDefinitions,
-    handle: (name, args, c) => runtime.call(name, args, c),
+    handle: (name, args, c) => forwarded
+        ? brokerCall(tools, name, args, cancellation: c)
+        : runtime.call(name, args, c),
     closeRuntime: () async {
+      if (forwarded) return;
       await runtime.close();
       await broker.close();
     },
@@ -77,7 +83,15 @@ Future<void> run(List<String> arguments) async {
   runtime = AutomationRuntime(host, tools, gateway.official);
   runtime.onStop = gateway.stop;
   broker = Broker(runtime);
-  await broker.start();
+  try {
+    await broker.start();
+  } on AutomationError catch (e) {
+    if (e.code != 'service_running' || local != null) rethrow;
+    forwarded = true;
+    stderr.writeln(
+      'Forwarding automation tools to the resident service in ${tools.artifacts}',
+    );
+  }
   final running = gateway.run();
   WireClient? resident;
   if (local != null) {

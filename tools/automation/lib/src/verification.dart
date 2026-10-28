@@ -60,7 +60,10 @@ extension FixtureVerification on AutomationRuntime {
       'selector': {'kind': 'key', 'value': key},
     }, cancellation);
     Future<Json> shot(String label) async {
-      final result = await capture(session, {'label': label}, cancellation);
+      final result = await capture(session, {
+        'label': label,
+        if (args['channels'] != null) 'channels': args['channels'],
+      }, cancellation);
       final evidence = result.child('structuredContent');
       for (final item in evidence.items('items').map(object)) {
         items.add({
@@ -201,7 +204,7 @@ extension FixtureVerification on AutomationRuntime {
         'action': 'textEmulation',
         'enabled': false,
       }, cancellation);
-      if (session.platform == TargetPlatform.android) {
+      if (session.platform.isMobile) {
         await check('native-keyboard', () async {
           await tap('nav-interaction');
           await tap('input-field');
@@ -211,7 +214,11 @@ extension FixtureVerification on AutomationRuntime {
             cancellation: cancellation,
           );
           await shot('native-keyboard');
-          await drive(session, {'action': 'back'}, cancellation);
+          await drive(session, {
+            'action': session.platform == TargetPlatform.android
+                ? 'back'
+                : 'unfocus',
+          }, cancellation);
           await until(
             session.state,
             (s) => s.child('view').number('keyboardInset') == 0,
@@ -283,6 +290,7 @@ extension FixtureVerification on AutomationRuntime {
             'label': 'animation',
             'seconds': 3,
             'fps': 2,
+            if (args['channels'] != null) 'channels': args['channels'],
           }, cancellation);
           final recorded = recording.items('items').map(object).toList();
           items.addAll(recorded);
@@ -295,7 +303,7 @@ extension FixtureVerification on AutomationRuntime {
                 w = rect.number('width') * ratio,
                 h = rect.number('height') * ratio;
             if (item['channel'] == 'native') {
-              if (session.platform == TargetPlatform.windows) {
+              if (session.platform != TargetPlatform.android) {
                 x += video.number('clientX');
                 y += video.number('clientY');
               } else {
@@ -315,6 +323,9 @@ extension FixtureVerification on AutomationRuntime {
             }
             final motion = await media.inspect(
               video.text('masterPath', fallback: video.text('path')),
+              rotation: CaptureRotation.fromDegrees(
+                video.integer('rotationToAppDegrees', fallback: 0),
+              ),
               region: {
                 'x': x.round(),
                 'y': y.round(),
@@ -360,13 +371,53 @@ extension FixtureVerification on AutomationRuntime {
         );
         return shot('animation-paused');
       });
-      if (session.platform == TargetPlatform.android) {
+      if (session.platform.isMobile) {
         await check('orientation', () async {
           await drive(session, {
             'action': 'orientation',
             'value': 'landscape',
           }, cancellation);
           await shot('landscape');
+          if (session.platform == TargetPlatform.ios &&
+              args.flag('record', fallback: true) &&
+              (args['channels'] == null ||
+                  args.items('channels').contains('native'))) {
+            final recording = await record(session, {
+              'label': 'landscape-video',
+              'seconds': 2,
+              'nativeFps': 1,
+              'channels': ['native'],
+            }, cancellation);
+            for (final item in recording.items('items').map(object)) {
+              items.add({
+                ...item,
+                'channel': 'landscape/video/${item['channel']}',
+              });
+              if (item['passed'] == true) {
+                final video = item.child('result');
+                final view = (await session.state()).child('view');
+                final ratio = view.number('pixelRatio');
+                final decoded = await media.inspect(
+                  video.text('masterPath'),
+                  rotation: CaptureRotation.fromDegrees(
+                    video.integer('rotationToAppDegrees', fallback: 0),
+                  ),
+                  region: {
+                    'x': 0,
+                    'y': 0,
+                    'width': (view.number('width') * ratio).round(),
+                    'height': (view.number('height') * ratio).round(),
+                  },
+                  cancellation: cancellation,
+                );
+                items.add({
+                  'channel': 'landscape/video-analysis',
+                  'passed': video['timingPassed'] == true,
+                  'result': decoded,
+                });
+              }
+            }
+          }
           await drive(session, {
             'action': 'orientation',
             'value': 'portrait',
@@ -418,8 +469,7 @@ extension FixtureVerification on AutomationRuntime {
         return after;
       });
     } finally {
-      if (session.platform == TargetPlatform.android &&
-          session.orientationChanged) {
+      if (session.platform.isMobile && session.orientationChanged) {
         await drive(session, {
           'action': 'orientation',
           'value': 'restore',
@@ -483,8 +533,7 @@ extension FixtureVerification on AutomationRuntime {
         'sessionId': id,
         'platform': platform.name,
         'placement': ['auto', 'primary', 'secondary'][cycle % 3],
-        if (platform == TargetPlatform.android)
-          'deviceId': args.text('deviceId'),
+        if (platform.isMobile) 'deviceId': args.text('deviceId'),
       }, cancellation);
       final items = <Json>[];
       results.add({'cycle': cycle, 'sessionId': id, 'captures': items});
@@ -519,26 +568,29 @@ extension FixtureVerification on AutomationRuntime {
           'token': (probe.integer('token') + 1) & 0xffffff,
         };
         final path = p.join(session.directory.path, 'fence.png');
-        var completed = false;
+        var accepted = false;
+        Object? failure;
         final pending =
-            (platform == TargetPlatform.windows
-                    ? WindowsCapture(host, tools).screenshot(
-                        path,
-                        probe.child('native'),
-                        probe: future,
-                        cancellation: cancellation,
-                      )
-                    : session.android!.screenshot(
-                        path,
-                        probe: future,
-                        cancellation: cancellation,
-                      ))
-                .whenComplete(() => completed = true);
-        unawaited(pending.catchError((Object e) => <String, Object?>{}));
+            nativeScreenshot(
+              session,
+              path,
+              probe.child('native'),
+              probe: future,
+              cancellation: cancellation,
+            ).then((value) {
+              accepted = true;
+              return value;
+            });
+        unawaited(
+          pending.then<void>((_) {}, onError: (Object e) => failure = e),
+        );
         await cancellation.wait(
           Future<void>.delayed(const Duration(milliseconds: 350)),
         );
-        if (completed) {
+        // A capture that failed early proves nothing about the fence; report
+        // the real error rather than a fence violation or a pass.
+        if (failure != null) throw failure!;
+        if (accepted) {
           throw const AutomationError(
             'stale_presentation',
             'A future token was accepted before it was rendered',
@@ -561,20 +613,13 @@ extension FixtureVerification on AutomationRuntime {
           final invalid = p.join(session.directory.path, 'never-presented.png');
           var rejected = false;
           try {
-            if (platform == TargetPlatform.windows) {
-              await WindowsCapture(host, tools).screenshot(
-                invalid,
-                released.child('native'),
-                probe: missing,
-                cancellation: cancellation,
-              );
-            } else {
-              await session.android!.screenshot(
-                invalid,
-                probe: missing,
-                cancellation: cancellation,
-              );
-            }
+            await nativeScreenshot(
+              session,
+              invalid,
+              released.child('native'),
+              probe: missing,
+              cancellation: cancellation,
+            );
           } catch (e) {
             cancellation.check();
             if (await File(invalid).exists()) rethrow;

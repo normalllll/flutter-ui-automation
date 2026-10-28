@@ -16,9 +16,12 @@ class ContentConnection extends FlutterConnection {
   ContentConnection()
     : super(OfficialBridge((_) {}), 'ws://unused', HookProtocol.fixture);
   int screenshots = 0;
+  final released = <Object?>[];
   final png = image.encodePng(image.Image(width: 2, height: 2));
   @override
   Future<Json> hook(String command, [Json arguments = const {}]) async {
+    if (command == 'prepareCapture') return {'token': 1, 'hold': 7};
+    if (command == 'releaseCapture') released.add(arguments['hold']);
     if (command == 'appScreenshot') {
       screenshots++;
       return {'png': base64Encode(png), 'width': 2, 'height': 2};
@@ -73,6 +76,42 @@ class InterruptedSession extends Session {
 }
 
 void main() {
+  test(
+    'the presentation hold is released even when native capture fails',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'automation-release-',
+      );
+      final host = Host(),
+          tools = Toolchain(
+            directory.path,
+            flutterRoot: directory.path,
+            artifacts: directory.path,
+          );
+      final connection = ContentConnection(),
+          runtime = AutomationRuntime(host, tools, OfficialBridge((_) {}));
+      final session = InterruptedSession(
+        directory,
+        connection,
+        Device(host, tools, connection),
+      );
+      runtime.sessions.active[session.id] = session;
+      try {
+        // The first observation passes; the native item's own observation
+        // then fails, after prepareCapture has shown the probe.
+        final result = (await runtime.call('automation_capture', {
+          'sessionId': session.id,
+          'channels': ['native'],
+        }, Cancellation())).child('structuredContent');
+        expect(result.items('items').map(object).single['passed'], false);
+        expect(connection.released, [7]);
+      } finally {
+        await runtime.close();
+        await directory.delete(recursive: true);
+      }
+    },
+  );
+
   test(
     'lost native target and final observation preserve app evidence; retry only native',
     () async {

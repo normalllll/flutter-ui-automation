@@ -100,6 +100,62 @@ class WindowsApi {
     }
   }
 
+  /// Terminates exactly [expected]: the identity is rechecked through the same
+  /// handle that is signalled, so a reused PID is never terminated.
+  bool terminate(WindowsIdentity expected) {
+    final open = _kernel
+        .lookupFunction<
+          IntPtr Function(Uint32, Int32, Uint32),
+          int Function(int, int, int)
+        >('OpenProcess');
+    final close = _kernel
+        .lookupFunction<Int32 Function(IntPtr), int Function(int)>(
+          'CloseHandle',
+        );
+    final times = _kernel
+        .lookupFunction<
+          Int32 Function(
+            IntPtr,
+            Pointer<Uint64>,
+            Pointer<Uint64>,
+            Pointer<Uint64>,
+            Pointer<Uint64>,
+          ),
+          int Function(
+            int,
+            Pointer<Uint64>,
+            Pointer<Uint64>,
+            Pointer<Uint64>,
+            Pointer<Uint64>,
+          )
+        >('GetProcessTimes');
+    final kill = _kernel
+        .lookupFunction<Int32 Function(IntPtr, Uint32), int Function(int, int)>(
+          'TerminateProcess',
+        );
+    // PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION
+    final handle = open(0x0001 | 0x1000, 0, expected.pid);
+    if (handle == 0) return false;
+    final fileTimes = calloc<Uint64>(4);
+    try {
+      if (times(
+                handle,
+                fileTimes,
+                fileTimes + 1,
+                fileTimes + 2,
+                fileTimes + 3,
+              ) ==
+              0 ||
+          fileTimes.value != expected.created) {
+        return false;
+      }
+      return kill(handle, 1) != 0;
+    } finally {
+      close(handle);
+      calloc.free(fileTimes);
+    }
+  }
+
   void requireWindow(int hwnd, int pid) {
     if (!Platform.isWindows) {
       throw const AutomationError(
@@ -183,17 +239,39 @@ class WindowsCapture {
     }
     try {
       api.requireWindow(native.integer('hwnd'), native.integer('pid'));
-      final result = await host.run(tools.helper, [
-        '--hwnd',
-        '${native.integer('hwnd')}',
-        '--backend',
-        backend,
-        '--png',
-        partial.path,
-        if (probe != null) ...probeArguments(probe),
-        '--diagnostic-png',
-        diagnostic.path,
-      ], cancellation: cancellation);
+      final result = await host.run(
+        tools.helper,
+        [
+          '--hwnd',
+          '${native.integer('hwnd')}',
+          '--backend',
+          backend,
+          '--png',
+          partial.path,
+          if (probe != null) ...probeArguments(probe),
+          '--diagnostic-png',
+          diagnostic.path,
+        ],
+        cancellation: cancellation,
+        check: false,
+      );
+      if (result.code != 0) {
+        // The helper reports an unpresented probe as structured JSON on
+        // stderr; keep that classification and its diagnostics.
+        final report = helperFailure(result.error);
+        if (report?['error'] == 'capture_not_presented') {
+          throw AutomationError(
+            'stale_presentation',
+            'Native marker was not presented before the helper timeout',
+            report!,
+          );
+        }
+        throw AutomationError(
+          'capture_failed',
+          '${p.basename(tools.helper)} exited ${result.code}',
+          {'stderr': result.error, 'helper': ?report},
+        );
+      }
       api.requireWindow(native.integer('hwnd'), native.integer('pid'));
       final metadata = decodeObject(result.text);
       if (probe != null && metadata['probeMatched'] != true) {
@@ -215,4 +293,18 @@ class WindowsCapture {
       if (await partial.exists()) await partial.delete();
     }
   }
+}
+
+/// The last JSON object a capture helper wrote to stderr, if any.
+Json? helperFailure(String stderrText) {
+  for (final line in stderrText.trim().split('\n').reversed) {
+    final text = line.trim();
+    if (!text.startsWith('{')) continue;
+    try {
+      return decodeObject(text);
+    } on Object {
+      continue;
+    }
+  }
+  return null;
 }

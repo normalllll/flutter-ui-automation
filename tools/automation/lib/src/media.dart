@@ -30,7 +30,9 @@ class Media {
   Future<Json> inspect(
     String path, {
     Json? region,
+    CaptureRotation rotation = CaptureRotation.none,
     Cancellation? cancellation,
+    int minimumSamples = 2,
   }) async {
     final metadata = decodeObject(
       (await host.run(tools.program('ffprobe', variable: 'FFPROBE'), [
@@ -61,7 +63,7 @@ class Media {
         '-i',
         path,
         '-vf',
-        '${crop}fps=2,scale=64:36',
+        '${rotation.videoFilter}${crop}fps=2,scale=64:36',
         '-pix_fmt',
         'rgb24',
         '-f',
@@ -69,10 +71,10 @@ class Media {
         '-',
       ], cancellation: cancellation)).text,
     );
-    if (hashes.length < 2) {
-      throw const AutomationError(
+    if (hashes.length < minimumSamples) {
+      throw AutomationError(
         'invalid_video',
-        'Recording has fewer than two decoded samples',
+        'Recording has fewer than $minimumSamples decoded samples',
       );
     }
     return {
@@ -87,6 +89,7 @@ class Media {
       'uniqueSampleFrames': hashes.toSet().length,
       'decodable': true,
       'region': ?region,
+      'analysisRotationDegrees': rotation.degrees,
     };
   }
 
@@ -191,9 +194,87 @@ class Media {
     int seconds,
     double fps,
     Cancellation cancellation,
+  ) => _pngRecording(
+    path,
+    seconds,
+    fps,
+    cancellation,
+    (frame) =>
+        appPng(session, frame, settle: false, cancellation: cancellation),
+  );
+
+  Future<Json> unixRecording(
+    Session session,
+    String path,
+    int seconds,
+    double fps,
+    Json? probe,
+    Cancellation cancellation,
+  ) async {
+    final native = (await session.state()).child('native');
+    CaptureRotation? rotation;
+    final result = await _pngRecording(path, seconds, fps, cancellation, (
+      frame,
+    ) async {
+      final currentNative = (await session.state()).child('native');
+      final bounds = native.child('viewBounds');
+      final currentBounds = currentNative.child('viewBounds');
+      if ([
+            'x',
+            'y',
+            'width',
+            'height',
+          ].any((key) => bounds[key] != currentBounds[key]) ||
+          native['interfaceOrientation'] !=
+              currentNative['interfaceOrientation']) {
+        throw const AutomationError(
+          'geometry_changed',
+          'Native viewport changed during recording',
+        );
+      }
+      final capture = await session.unixTarget!.screenshot(
+        frame,
+        currentNative,
+        probe: probe,
+        cancellation: cancellation,
+      );
+      final current = CaptureRotation.fromDegrees(
+        capture.integer('rotationToAppDegrees', fallback: 0),
+      );
+      if (rotation != null && rotation != current) {
+        throw const AutomationError(
+          'geometry_changed',
+          'Display rotation changed during recording',
+        );
+      }
+      rotation = current;
+      return capture;
+    });
+    return {
+      ...result,
+      'source': session.platform.name,
+      'clientX': native.child('viewBounds')['x'],
+      'clientY': native.child('viewBounds')['y'],
+      'presentationVerified': probe != null,
+      'rotationToAppDegrees': rotation?.degrees ?? 0,
+    };
+  }
+
+  Future<Json> _pngRecording(
+    String path,
+    int seconds,
+    double fps,
+    Cancellation cancellation,
+    Future<Json> Function(String) capture,
   ) async {
     final frames = Directory('${p.withoutExtension(path)}.frames');
     await frames.create(recursive: true);
+    // One untimed capture first: the first full-resolution app screenshot pays
+    // one-off raster/shader preparation that is not representative of the
+    // sampling rate. It is discarded and never enters the recording.
+    final warmup = File(p.join(frames.path, 'warmup.png'));
+    await capture(warmup.path);
+    if (await warmup.exists()) await warmup.delete();
     final clock = Stopwatch()..start();
     final count = (seconds * fps).round();
     final samples = <int>[];
@@ -204,12 +285,7 @@ class Media {
         await cancellation.wait(Future<void>.delayed(target - clock.elapsed));
       }
       samples.add(clock.elapsedMicroseconds);
-      await appPng(
-        session,
-        p.join(frames.path, '${i.toString().padLeft(4, '0')}.png'),
-        settle: false,
-        cancellation: cancellation,
-      );
+      await capture(p.join(frames.path, '${i.toString().padLeft(4, '0')}.png'));
     }
     final expected = Duration(seconds: seconds);
     if (clock.elapsed < expected) {
@@ -352,16 +428,22 @@ class Media {
       final captureCode = await cancellation.wait(
         recorder.exitCode.timeout(Duration(seconds: seconds * 2 + 20)),
       );
-      await pipe;
+      Object? pipeError;
+      try {
+        await pipe;
+      } catch (e) {
+        // An encoder that exits early breaks the pipe; report its stderr.
+        pipeError = e;
+      }
       final encoderCode = await cancellation.wait(
         encoder.exitCode.timeout(const Duration(minutes: 2)),
       );
       await stderrDone;
-      if (captureCode != 0 || encoderCode != 0) {
+      if (captureCode != 0 || encoderCode != 0 || pipeError != null) {
         throw AutomationError(
           'record_failed',
           'Native capture=$captureCode encoder=$encoderCode',
-          {'stderr': await errors},
+          {'stderr': await errors, 'pipe': ?pipeError?.toString()},
         );
       }
       capture.api.requireWindow(native.integer('hwnd'), native.integer('pid'));
@@ -409,16 +491,21 @@ class Media {
     try {
       // screenrecord has its own finite lifetime. Do not claim killing the ADB
       // transport has stopped or finalized the device encoder.
-      final recording = await device.command([
-        'shell',
-        'screenrecord',
-        '--display-id',
-        source.text('displayId'),
-        '--verbose',
-        '--time-limit',
-        '$seconds',
-        remote,
-      ], timeout: Duration(seconds: seconds + 25));
+      final recording = await device.command(
+        [
+          'shell',
+          'screenrecord',
+          '--display-id',
+          source.text('displayId'),
+          '--verbose',
+          '--time-limit',
+          '$seconds',
+          remote,
+        ],
+        timeout: Duration(seconds: seconds + 25),
+        cancellation: cancellation,
+      );
+      final recordedMs = clock.elapsedMilliseconds;
       await File(
         '$stem.screenrecord.log',
       ).writeAsString('${recording.text}\n${recording.error}');
@@ -435,7 +522,21 @@ class Media {
           'Physical panel changed during recording',
         );
       }
-      final metadata = await inspect(candidate, cancellation: cancellation);
+      // screenrecord emits frames only when the display changes, so a static
+      // screen can produce a single frame and a short encoded duration.
+      final metadata = await inspect(
+        candidate,
+        cancellation: cancellation,
+        minimumSamples: 1,
+      );
+      final encodedSeconds = metadata.number('durationSeconds');
+      final encodedTiming = (encodedSeconds - seconds).abs() <= seconds * .15;
+      // A short file is accepted only when the device encoder demonstrably ran
+      // for the requested interval; the basis is reported, never hidden.
+      final staticTail =
+          !encodedTiming &&
+          encodedSeconds < seconds &&
+          recordedMs >= seconds * 1000 * .85;
       final fit = projection(
         source.integer('width'),
         source.integer('height'),
@@ -484,13 +585,32 @@ class Media {
         'displayId': source['displayId'],
         'elapsedMs': clock.elapsedMilliseconds,
         'expectedMs': seconds * 1000,
-        'timingPassed':
-            (metadata.number('durationSeconds') - seconds).abs() <=
-            seconds * .15,
+        'recordedMs': recordedMs,
+        'timingBasis': encodedTiming
+            ? 'encodedDuration'
+            : staticTail
+            ? 'screenrecordWallClock'
+            : 'encodedDuration',
+        'staticTail': staticTail,
+        'timingPassed': encodedTiming || staticTail,
       };
     } finally {
       if (await File(candidate).exists()) {
         await File(candidate).rename('$stem.failed-device.mp4');
+      }
+      if (cancellation.cancelled) {
+        // Killing the ADB client does not stop the device encoder.
+        try {
+          await device.command([
+            'shell',
+            'pkill',
+            '-INT',
+            '-f',
+            remote,
+          ], check: false);
+        } catch (e) {
+          stderr.writeln('Device recorder cleanup: $e');
+        }
       }
       try {
         await device.command(['shell', 'rm', '-f', remote], check: false);

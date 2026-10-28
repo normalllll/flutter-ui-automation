@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flutter-ui-automation-remote": {
+      "command": "ssh",
+      "args": [
+        "-T", "-o", "BatchMode=yes", "automation-host",
+        "exec '/absolute/path/to/flutter-ui-automation/tools/automation/build/automation' --root '/absolute/path/to/flutter-ui-automation' --flutter-root '/absolute/path/to/flutter' --artifacts '/absolute/path/to/isolated-artifacts'"
+      ]
+    }
+  }
+}

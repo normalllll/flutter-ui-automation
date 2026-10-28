@@ -205,6 +205,45 @@ void main() {
           expect(connection.disableAttempts, 1);
         },
       );
+
+      test('raw request and driver cannot bypass mode tracking', () async {
+        final raw = switch (mode) {
+          TestMode.textEmulation => {
+            'action': 'driver',
+            'settle': false,
+            'arguments': {
+              'command': 'set_text_entry_emulation',
+              'enabled': 'true',
+            },
+          },
+          TestMode.foreground => {
+            'action': 'request',
+            'settle': false,
+            'value': 'pretendForeground',
+            'arguments': {'enabled': true},
+          },
+          TestMode.orientation => {
+            'action': 'driver',
+            'settle': false,
+            'arguments': {
+              'command': 'request_data',
+              'message': '{"command":"orientation","value":"landscape"}',
+            },
+          },
+        };
+        await expectLater(
+          runtime.drive(session, raw, Cancellation()),
+          throwsA(
+            isA<AutomationError>().having(
+              (e) => e.code,
+              'code',
+              'tracked_mode',
+            ),
+          ),
+        );
+        expect(connection.enabled, false);
+        expect(session.toJson()[mode.field], false);
+      });
     });
   }
 }

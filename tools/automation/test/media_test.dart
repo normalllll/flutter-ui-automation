@@ -11,6 +11,7 @@ import 'package:flutter_ui_automation/src/protocol.dart';
 import 'package:flutter_ui_automation/src/sessions.dart';
 import 'package:image/image.dart' as image;
 import 'package:path/path.dart' as p;
+import 'package:flutter_ui_automation/src/pixels.dart';
 import 'package:test/test.dart';
 
 class _Frames extends FlutterConnection {
@@ -53,7 +54,7 @@ Session _session(
 
 const _probe = <String, Object?>{
   'token': 42,
-  'rect': {'x': 8, 'y': 8, 'width': 128, 'height': 8},
+  'rect': {'x': 8, 'y': 8, 'width': 96, 'height': 48},
   'pixelRatio': 2,
   'native': {
     'viewBounds': {'x': 10, 'y': 20, 'width': 300, 'height': 150},
@@ -63,14 +64,7 @@ const _probe = <String, Object?>{
 Uint8List _markerPng() {
   final pixels = image.Image(width: 320, height: 180);
   image.fill(pixels, color: image.ColorRgb8(245, 247, 251));
-  const word = (0xa << 28) | (42 << 4) | 5;
-  for (var y = 36; y < 52; y++) {
-    for (var x = 26; x < 282; x++) {
-      final bit = (word >> (31 - (x - 26) ~/ 8)) & 1;
-      final color = bit == 1 ? [240, 180, 41] : [22, 50, 79];
-      pixels.setPixelRgb(x, y, color[0], color[1], color[2]);
-    }
-  }
+  paintProbe(pixels, _probe);
   return image.encodePng(pixels);
 }
 
@@ -163,7 +157,8 @@ void main() {
         2,
         Cancellation(),
       );
-      expect(frames.screenshots, 4);
+      // One discarded warm-up capture precedes the four timed samples.
+      expect(frames.screenshots, 5);
       expect(notes['losslessVerified'], true);
       expect(notes['verifiedFrames'], 4);
       expect(notes['previewIsLossy'], true);
@@ -181,7 +176,8 @@ void main() {
         ).readAsBytes(),
       )!;
       expect((first.width, first.height), (65, 37));
-      expect(first.getPixel(0, 0).r, 20);
+      // The warm-up frame (r = 20) is not part of the recording.
+      expect(first.getPixel(0, 0).r, 60);
       expect(
         (await media.inspect(notes.text('masterPath')))['durationSeconds'],
         closeTo(2, .05),
