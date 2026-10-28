@@ -51,6 +51,11 @@ version for dependency resolution. FFmpeg preparation has a five-minute step lim
 Linux package setup is noninteractive with bounded network and lock waits.
 No custom SDK-version startup gate is used.
 CI never establishes visual acceptance.
+The Linux job can exercise the fixture on an isolated Xvfb display; this establishes
+virtual-display behavior, not a physical desktop. macOS CI builds the helper and
+macOS/iOS Simulator fixtures without requesting screen capture permission.
+Opt-in runtime checks are in `tools/automation/bin/check_platform.dart`; read the
+platform guides before running them on an authorized native host.
 
 ## Changes and evidence
 

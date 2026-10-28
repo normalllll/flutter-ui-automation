@@ -3,7 +3,8 @@
 The current runtime is the [resident Dart MCP](../references/mcp.md). Build it
 once with `tools/automation/build.ps1`, using Dart already supplied by Flutter.
 Python is needed only for repository checks and standalone Windows capture;
-the resident Windows/Android workflow does not require it.
+the resident workflow does not require it. Linux/macOS/iOS Simulator builds use
+`bash tools/automation/build.sh linux|macos|ios` on the target host.
 
 ## Get the source
 
@@ -36,6 +37,9 @@ another app using its existing Driver harness or the
 | Windows capture | Windows 10 1903+ with WGC support and an accessible interactive desktop |
 | Windows build | Visual Studio Desktop development with C++, CMake 3.14+ and Windows SDK; C++20 helper |
 | Android | Flutter Android toolchain, Android SDK, compatible JDK 17+, and an explicitly selected trusted device |
+| Linux X11 | Flutter Linux toolchain, GTK 3, X11/libpng development libraries; Xvfb and software GL for isolated headless runs |
+| macOS | Xcode and Flutter macOS tooling; ScreenCaptureKit screenshot helper requires macOS 14+ and user-granted Screen Recording permission |
+| iOS Simulator | Mac with Xcode and an available, explicitly booted Simulator runtime; physical-device control/capture is not bundled |
 
 SDK constraints declare the minimum supported versions, not an exact installed
 version. Newer SDKs are permitted, and the service does not reject a host based
@@ -73,6 +77,9 @@ After obtaining authorization for the relevant build and runtime operations, use
 the [Windows quick start](../README.md#windows-quick-start) or
 [Android quick start](../README.md#android-quick-start). Tool installation does
 not grant permission to launch or capture an app.
+Linux and Apple preparation, execution limits and remote setup are described in
+[Linux](../references/linux.md), [Apple](../references/apple.md) and
+[remote execution](../references/remote.md).
 
 ## Repository checks
 

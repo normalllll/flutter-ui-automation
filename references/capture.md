@@ -15,22 +15,31 @@ or checking the PNG file exists does not establish the requested content.
 The fixture now exposes `prepareCapture` through its test entrypoint:
 
 1. Wait (bounded, 3 s by default) for transient animations to settle, then
-   advance a 24-bit sequence and paint it in a small 32-cell color strip above
-   the Navigator, at the bottom right. The strip is explicit test instrumentation,
+   advance a 24-bit sequence and paint it as a small 8×4 dot matrix above the
+   Navigator, at the bottom right. Dots read row-major from the top-left as
+   `1010`, the token, then `0101`; pink (`#FF8FB1`) is 1 and aqua (`#38BDD8`)
+   is 0. The matrix is explicit test instrumentation,
    absent from the normal entrypoint, painted only for the requested hold
    (`holdMs`, 12 s by default for a screenshot, extended by the recording caller),
    and outside the app-capture boundary, so app PNGs never contain
    it. Native captures do; their metadata reports `probeRect` in image pixels.
-2. Return the strip's logical bounds, device pixel ratio, and actual HWND/PID.
+2. Return the matrix's logical bounds, device pixel ratio, and actual HWND/PID.
 3. The native helper converts the bounds to physical client coordinates and
    samples the real HWND capture. WGC's frame origin uses DWM extended frame
    bounds; PrintWindow's uses GetWindowRect. Mixing these origins causes offsets.
+   Each decoder splits the bounds into an 8×4 grid and averages a 3×3 pixel
+   neighbourhood at each cell centre, so the gaps between dots are never
+   sampled. The header's two pink and two aqua dots calibrate the observed
+   colours: they must stay within 64 per channel of nominal and at least 90
+   apart, and every dot must lie near one calibrated colour. A uniform shift
+   from lossy video, tone mapping or night light is tolerated; another palette,
+   a blank frame or a wrong token is not.
 4. Reject available frames whose marker does not match the requested token.
    Wait at most ten seconds. Return attempts, rejected frames and wait time.
    On timeout, fail instead of saving a claimed fresh PNG.
 
 Window recording checks the exact token at startup, then continues checking the
-strip's framing and color palette. The token may advance during a concurrent
+matrix's header, trailer and calibrated palette. The token may advance during a concurrent
 screenshot. Recording does not stop just because a legitimate screenshot asks
 for a newer frame. Neither capture path inserts app pixels into a native image.
 

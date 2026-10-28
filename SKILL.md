@@ -1,6 +1,6 @@
 ---
 name: flutter-ui-automation
-description: Test and visually inspect Flutter UI on Windows and Android using application-internal controls plus independent window or device screenshots and recordings, without taking over host desktop input. Use for page walkthroughs, component interaction, and Flutter UI verification.
+description: Test and visually inspect Flutter UI on Windows, Android, Linux X11, macOS and iOS Simulator using application-internal controls and scoped capture, without taking over host desktop input. Check backend permissions and validation limits before claiming native presentation acceptance.
 ---
 
 # Flutter UI Automation
@@ -24,7 +24,16 @@ rebuilds. Do not launch a new controller or app for each screenshot.
   placement, and background foreground simulation belong to Windows only.
 - **Android:** read [references/android.md](references/android.md) for mandatory
   device selection, owned/attached sessions, ADB capture and mobile acceptance.
-  The Android binding preserves real lifecycle and focus. No iOS backend exists.
+  The Android binding preserves real lifecycle and focus.
+- **Linux:** read [references/linux.md](references/linux.md). Native capture is
+  X11-only; use a dedicated virtual display for unattended checks. WSLg evidence
+  is distinct from a physical Linux desktop or Wayland compositor.
+- **macOS / iOS Simulator:** read [references/apple.md](references/apple.md).
+  Build and execute on a Mac. macOS independent capture needs Screen Recording
+  permission; iOS requires an explicit booted Simulator UDID. No physical iOS
+  device backend is implemented.
+- **Remote hosts:** read [references/remote.md](references/remote.md). Run the same
+  MCP on the target host through SSH stdio; keep paths and artifacts host-scoped.
 
 Resolve paths from this skill directory. The working fixture stays under
 `examples/capture_lab/`; it is not a universal protocol for arbitrary release apps.

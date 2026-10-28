@@ -1,6 +1,6 @@
 # Capture Lab fixture
 
-Windows and Android reference application for the Flutter UI Automation skill.
+Windows, Android, Linux, macOS and iOS Simulator reference application for the Flutter UI Automation skill.
 Use the [resident MCP workflow](../../references/mcp.md) for builds, persistent
 sessions, interactions, capture and verification.
 
@@ -9,6 +9,8 @@ sessions, interactions, capture and verification.
   explicit framework lifecycle/view-focus simulation.
 - Android test entrypoint: `lib/android_driver_main.dart`; real mobile lifecycle,
   native identity/geometry and explicit Driver text emulation for Unicode input.
+- Linux/macOS/iOS test entrypoint: `lib/platform_driver_main.dart`; shared real
+  lifecycle binding and platform-native identity/geometry channels.
 - `test/`: binding restoration, focus guard, adaptive layout and widget checks.
 
 From the repository root on Windows:
@@ -17,6 +19,10 @@ From the repository root on Windows:
 ./tools/automation/build.ps1 -FlutterRoot C:/path/to/flutter -Fixture windows
 # Use -Fixture android for an Android build.
 ```
+
+On Linux or macOS, run `bash tools/automation/build.sh linux`, `macos` or `ios`
+from the repository root. See [Linux](../../references/linux.md),
+[Apple](../../references/apple.md) and [remote execution](../../references/remote.md).
 
 Prepare dependencies with `flutter pub get` here before building through another
 entrypoint. Minimum supported toolchains are Flutter 3.44.0 / Dart 3.12.0. CI follows stable

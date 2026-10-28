@@ -2,6 +2,43 @@
 
 ## 0.2.0 — unreleased
 
+- Replace the 32-cell presentation strip with an 8×4 pink/aqua dot matrix.
+  Decoders sample a 3×3 neighbourhood per cell and calibrate both colours from
+  the header, tolerating uniform shifts while rejecting other palettes.
+- Release the presentation probe when a capture or recording ends (`hold` /
+  `releaseCapture`) instead of holding it for a fixed interval; it now sits in
+  the fixture's top-right header area.
+- Discard one warm-up app screenshot before timed app recordings, so one-off
+  first-frame preparation no longer fails acquisition timing.
+- Restyle the fixture as a dark instrument panel with flat large surfaces
+  (cheap on-device PNG encoding) and keep every automation key and text.
+
+- A second MCP client on the same artifacts root forwards automation tools to the
+  resident service instead of exiting before the MCP handshake.
+- Report real capture errors from the cold-start fence and never-presented checks
+  instead of treating any early failure as a fence result.
+- Reject raw `request`/`driver` calls that change tracked reversible modes; the
+  fixture now starts with Driver text emulation off, matching restore behavior.
+- Treat a recycled native PID as an exited app so stop releases its lease without
+  touching the replacement; force-terminate only a verified owned Windows app
+  that ignores close. Guard failed-start rollback so the lease is always released.
+- Close start/stop races: recordings block stop from enqueue, cancelled starts
+  publish no session, and two sessions cannot share one VM endpoint.
+- Honor cancellation in Android screenrecord and accept static-screen recordings
+  with an explicit `timingBasis`; drain Windows executable output before closing.
+- Report missing `FFMPEG`/`FFPROBE`/`ADB` overrides, coded process timeouts,
+  structured Windows `stale_presentation`, and clear stale Unix diagnostics.
+
+- Add Linux X11, macOS and iOS Simulator adapters with kernel process-instance
+  checks, owned cleanup/recovery and shared real-lifecycle fixture entrypoints.
+- Add scoped X11 and ScreenCaptureKit helpers, explicit iOS Simulator selection,
+  mobile keyboard/orientation/lifecycle checks and original-frame PNG recordings.
+- Preserve raw simulator frame orientation while applying declared coordinate
+  transforms for exact presentation markers, image comparisons and video analysis.
+- Add native-host runtime acceptance, source hot reload, cancellation/cold-start
+  checks, SSH stdio setup and Linux/macOS CI build coverage. macOS independent
+  capture still requires user-granted permission and retained runtime acceptance.
+
 - Retire the Python Flutter runtime and per-command Dart Driver entrypoints;
   migrate session/device/capture/media/acceptance regressions to the resident
   Dart implementation. Retain repository checks and independent HWND capture.

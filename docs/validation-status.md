@@ -8,13 +8,13 @@ service tokens and device identifiers remain in ignored local artifacts.
 
 | Check | Result | Scope |
 | --- | --- | --- |
-| Resident Dart MCP | 69 tests passed on Windows | Protocol, cancellation, evidence isolation, readiness, session/lease identity, device/panel capture, real FFmpeg fidelity/timing and interrupted acceptance |
+| Resident Dart MCP | 86 cases: Windows 73 passed / 13 platform skips; Linux and macOS each 75 passed / 11 platform skips | Protocol, cancellation, evidence isolation, readiness, session/lease/process identity, simulator binding before Driver mutation, retryable cleanup, failed-launch rollback, bounded process/pipe cleanup, raw simulator rotation and real FFmpeg fidelity/timing |
 | Compiled distribution | Passed without inherited `DART_ROOT` / `DART_SDK` | MCP initialization, merged tools, native-fps validation, compiled CLI reuse, EOF cleanup |
 | Broker lifetime | Passed | Authentication, shared service PID, duplicate rejection, shutdown and recovery after a forced service-only crash |
 | Independent Python capture | 11 tests passed on Windows | HWND/PID scope, diagnostic retention, atomic publication and helper cleanup; no Flutter/Android runtime remains |
 | Flutter fixture | Analysis clean; 10 headless tests passed | Binding restoration, focus guard, layout, dialogs and widget behavior |
 | Repository | Source/metadata/document links and `git diff --check` passed | Excludes ignored build, media, session and lock files from published source |
-| CI configuration | YAML parsed; Linux/Windows matrix and compiled startup check configured | Remote execution of the current change is pending |
+| CI configuration | Actionlint passed; Linux/Windows/macOS matrix, native/Apple builds and isolated Linux runtime checks configured | Remote execution of the uncommitted platform changes is pending |
 
 Local runtime measurements used Flutter 3.47.8 / Dart 3.13.7. Minimum supported
 toolchains are Flutter 3.44.0 / Dart 3.12.0, based on the embedded server's Dart
@@ -39,6 +39,26 @@ one. CI now includes those tags while continuing to follow `stable`. FFmpeg setu
 has a five-minute step limit and noninteractive Linux installation with bounded
 network retries/timeouts and lock waits. Remote results must be checked for the
 current commit; the failed run does not establish acceptance of these corrections.
+
+The subsequent [run for commit 801eaf2](https://github.com/normalllll/flutter-ui-automation/actions/runs/40383644877)
+passed all five jobs. It predates the current uncommitted Linux/Apple expansion.
+No new commit or push was made for the platform implementation. Detailed current
+host/runtime scope is in [Linux and Apple validation](unix-validation.md).
+
+## Linux and Apple runtime expansion
+
+Linux X11 passed the fixture walkthrough and both capture channels on an isolated
+WSL/Xvfb display. macOS passed app-only interaction/capture, actual source hot
+reload and recording cancellation over SSH; native ScreenCaptureKit capture is
+compiled but remains unverified because the host has not granted Screen Recording
+permission. iOS Simulator passed native keyboard, rotation, lifecycle, both capture
+channels, portrait/landscape recordings, source hot reload, cancellation and cold
+presentation fences. All owned test apps stopped with empty cleanup-error lists.
+
+Windows-to-Mac SSH stdio also passed tool discovery, remote environment inspection,
+inline PNG delivery and owned stop with the fixture observed inactive. Linux
+Wayland, physical Linux desktop/GPU behavior and physical iOS devices have no new
+runtime acceptance.
 
 ## Regression coverage after Python retirement
 

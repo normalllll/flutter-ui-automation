@@ -3,13 +3,13 @@
 ## Flutter project scaffolding
 
 The fixture contains project scaffolding derived from Flutter's templates,
-including the Windows runner/CMake project and Android host/resources under
-`examples/capture_lab/`. Adaptations include the custom Windows capture and
-non-activation integration and the Android fixture integration. The upstream
+including the Windows/Linux runners, Apple Xcode projects and Android host/resources
+under `examples/capture_lab/`. Adaptations include scoped capture/status channels,
+non-activation integration and mobile fixture integration. The upstream
 scaffolding retains the BSD license below; original project additions are
 GPL-3.0-or-later as described in COPYRIGHT.
 
-Source: [Flutter](https://github.com/flutter/flutter), reference SDK 3.47.6.
+Source: [Flutter](https://github.com/flutter/flutter), reference SDKs 3.47.6 and 3.47.8.
 Upstream license: [Flutter LICENSE](https://github.com/flutter/flutter/blob/3.47.6/LICENSE).
 
 ```text

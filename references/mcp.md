@@ -1,4 +1,4 @@
-# Resident Dart MCP: Windows and Android
+# Resident Dart MCP
 
 Use this route for new automation. The executable embeds the official
 `dart_mcp_server` **1.2.1** through its public `DartMCPServer.run(channel:)` API.
@@ -15,12 +15,20 @@ From the complete repository on Windows, with an installed Flutter SDK:
 # For Android, use -Fixture android, or automation_build below.
 ```
 
+Linux/macOS/iOS Simulator use `bash tools/automation/build.sh linux|macos|ios`
+on the target host. Platform preparation and capture boundaries are in
+[Linux](linux.md) and [Apple](apple.md); [remote execution](remote.md) uses the same
+compiled service over SSH stdio.
+
 Minimum supported toolchains are Flutter 3.44.0 and Dart 3.12.0. SDK constraints
 declare lower bounds; no exact SDK version is pinned or parsed to block startup. Native media capture needs
 FFmpeg/FFprobe; Android needs ADB and an explicitly authorized device. Windows
 needs its C++/Windows SDK toolchain. Building the Windows fixture also builds the
 capture helper. Paths resolve from PATH, `FLUTTER_ROOT`, `ADB`, `FFMPEG`,
 `FFPROBE`, `WINDOW_CAPTURE`, `ANDROID_SDK_ROOT`, and `ANDROID_HOME`.
+The additional native helpers can be selected with `LINUX_CAPTURE` and
+`MACOS_CAPTURE`. `automation_environment` reports host platform, Linux display
+environment, macOS Screen Recording preflight and available iOS Simulators.
 
 Configure the built executable as the single MCP server. Adapt the absolute
 paths in [mcp.example.json](../tools/automation/mcp.example.json) to the client.
@@ -80,6 +88,9 @@ For Unicode Driver input, turn `textEmulation` on, tap the field, enter text, th
 unfocus and turn emulation off before testing the real IME. `back`, `background`,
 `resume`, and orientation act only on the explicitly selected device/app. Native
 OS dialogs and Windows IME composition are not implemented by these tools.
+Raw `request`/`driver` actions reject hooks that change these reversible modes
+(`pretendForeground`, `orientation`, `set_text_entry_emulation`) with
+`tracked_mode`; use the dedicated actions so `stop` and `recover` restore them.
 
 ## Edit, reload, continue
 
@@ -127,8 +138,12 @@ previews. Windows native recording retains FFV1/BGRA and verifies decoded hashes
 Android retains the original **lossy** screenrecord MP4 and display projection.
 No trimming disguises an inaccurate capture duration. Reports separate
 acquisition, encoding/verification wall time, video duration and timing checks.
-Default app sampling is 5 fps on Windows and 2 fps on Android, native Windows
-sampling 12 fps. These are sampling rates, not claims of display-frame capture.
+Default app sampling is 5 fps on desktop and 2 fps on mobile. Native sampling
+defaults to 12 fps on Windows, 2 fps on Linux/macOS and 1 fps on iOS Simulator,
+whose display snapshots and instance checks are comparatively expensive.
+These are sampling rates, not claims of display-frame capture. An explicit rate
+that exceeds acquisition capacity produces a failed timing result and retains
+its original media; a valid file alone does not mark that channel as passed.
 Windows `nativeFps` accepts integers from 1 to 60; the helper and encoder use
 the same rate. App `fps` remains a separate sampling setting.
 
@@ -149,16 +164,19 @@ sessions to be finished first.
 Android) explicit device/package/instance identity. It never owns the attached
 app. `stop` restores temporary modes and stops only owned sessions. MCP EOF or
 `automation_service/stop` cancels jobs and cleans up the service's own resources.
-Reusing a session ID rejects conflicting explicit VM URI, hook profile or
-entrypoint instead of silently keeping a different target. Equivalent HTTP/WS
+Reusing a session ID rejects conflicting explicit VM URI, hook profile,
+entrypoint, executable or ownership (`start` versus `attach`) instead of silently
+keeping a different target. Two sessions cannot attach to the same VM endpoint. Equivalent HTTP/WS
 VM service endpoints still refer to the same target.
 
 After a service crash, `automation_session/recover` uses retained metadata and
-Windows process creation times to reject a still-live supervisor and recycled
-PIDs. For an owned app still alive it first reports `requiresStopOwned: true`;
+process creation/birth times to reject a still-live supervisor and recycled
+PIDs. A recycled app PID counts as an exited app, so cleanup never touches the
+replacement. For an owned app still alive it first reports `requiresStopOwned: true`;
 `stopOwned: true` closes that verified instance. Attached apps remain running.
-Recovery releases only the matching lease. Current crash recovery targets
-Windows hosts; macOS/iOS support is not supplied by this release.
+Recovery releases only the matching lease. It covers Windows, Android, Linux,
+macOS and iOS Simulator sessions; see [unix-validation](../docs/unix-validation.md)
+for the Unix evidence.
 If its owner is missing or has changed, recovery returns `lease_not_owned`
 before touching the app; retained metadata cannot authorize releasing a new
 session's lease.
@@ -183,6 +201,13 @@ For shell quoting, `call TOOL @arguments.json` reads the exact UTF-8 JSON file.
 client must use the same root as its service. The descriptor is loopback-only,
 authenticated with a per-process random token, and ignored by Git. A second live
 service cannot overwrite the first service's descriptor. Do not publish it.
+
+A second MCP client configured with the same `--artifacts` root (for example two
+agent sessions) does not start another service. It completes the MCP handshake,
+forwards `automation_*` tools to the resident owner and keeps its own embedded
+official Flutter tools. Cancelling a forwarded call abandons only the request;
+use `automation_jobs` to cancel long operations. Use a separate `--artifacts`
+root for a fully independent service.
 
 There is one resident **MCP server**, not one OS process for everything. Flutter
 keeps its compiler/app processes per session. WGC/PrintWindow helpers, ADB, builds

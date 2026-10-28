@@ -1,7 +1,9 @@
 # Flutter UI Automation
 
 Automate Flutter UI interactions, screenshots and recordings on **Windows and
-Android**, without taking over the host's mouse, keyboard or foreground window.
+Android**, plus Linux X11, macOS and iOS Simulator backends, without taking over
+the host's mouse, keyboard or foreground window. Backend-specific validation
+and permission limits are listed below.
 
 This repository contains an agent skill, a resident Dart MCP, an independent
 Windows capture helper and a Flutter reference fixture. Maintained by
@@ -17,11 +19,15 @@ is not a universal protocol for arbitrary release applications.
 | --- | --- | --- | --- |
 | Windows | Flutter Driver, app PNGs and recordings | Scoped HWND/PID WGC or PrintWindow | Interactive desktop; display-off reliability unresolved |
 | Android | Flutter Driver, app PNGs and recordings | Explicit-device ADB screenshots and lossy screenrecord | Physical USB Fold and emulator evidence; native system UI automation is separate |
-| iOS / other desktops | No bundled backend | No bundled backend | Unsupported |
+| Linux | Flutter Driver, app PNGs and recordings | Scoped X11 window capture | Verified in WSL with an isolated Xvfb display; Wayland capture is not implemented |
+| macOS | Flutter Driver, app PNGs and recordings | ScreenCaptureKit window helper | App workflow verified over SSH; independent capture requires Screen Recording permission and remains unverified on the current host |
+| iOS Simulator | Flutter Driver, app PNGs and recordings | Explicit-UDID `simctl` screenshots and PNG-sampled recordings | Runs on a Mac; physical-device backend is not implemented |
 
 Start with [installation](docs/installation.md), the
 [MCP workflow](references/mcp.md) and [current validation](docs/validation-status.md).
 Platform details: [Windows](references/windows.md), [Android](references/android.md).
+For the additional backends, read [Linux](references/linux.md),
+[macOS and iOS Simulator](references/apple.md), and [remote execution](references/remote.md).
 
 ## Capabilities
 
@@ -172,10 +178,12 @@ dart compile exe bin/automation.dart -o build/automation.exe
 dart run bin/check_startup.dart
 ```
 
-Linux headless CI compiles to `build/automation`; the startup check selects the
-platform's executable. CI runs Dart/Flutter analysis and headless tests on Linux
-and Windows, standalone Python capture tests on Windows, compiled MCP startup and
-Windows helper compilation. It does not establish native capture/visual acceptance.
+Unix builds compile to `build/automation`; the startup check selects the platform's
+executable. CI is configured for Dart/Flutter analysis and headless tests on Linux,
+Windows and macOS, standalone Python capture tests on Windows, compiled MCP startup,
+native helper builds and Apple fixture builds. The Linux job additionally runs the
+fixture on a dedicated virtual display. Physical desktop/device visual acceptance
+remains separate from these checks.
 
 Flutter sessions and their regressions use Dart exclusively. Python remains for
 repository checks and [independent Windows capture](references/usage.md).
