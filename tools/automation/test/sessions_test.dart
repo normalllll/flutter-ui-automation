@@ -180,7 +180,7 @@ void main() {
   for (final conflict in <Json>[
     {'vmUri': 'ws://127.0.0.1:1234/different=/ws'},
     {'vmUri': 'ftp://127.0.0.1:1234/original=/ws'},
-    {'hooks': 'booruflow'},
+    {'hooks': 'custom'},
     {'entrypoint': 'lib/another_main.dart'},
   ]) {
     test(

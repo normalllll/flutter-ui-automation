@@ -5,7 +5,7 @@ import 'package:flutter_ui_automation/src/protocol.dart';
 
 class BootingApp extends FlutterConnection {
   BootingApp()
-    : super(OfficialBridge((_) {}), 'ws://unused', HookProtocol.booruflow);
+    : super(OfficialBridge((_) {}), 'ws://unused', HookProtocol.fixture);
   int observations = 0;
   @override
   Future<void> rebind() async {}

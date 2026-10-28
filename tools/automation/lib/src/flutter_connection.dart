@@ -4,7 +4,9 @@ import 'dart:io';
 import 'gateway.dart';
 import 'protocol.dart';
 
-enum HookProtocol { fixture, booruflow }
+/// App-side hook protocol. Apps integrate by exposing the fixture's
+/// `request_data` commands (`state`, `prepareCapture`, `appScreenshot`, ...).
+enum HookProtocol { fixture }
 
 class FlutterConnection {
   FlutterConnection(this.bridge, this.uri, this.hooks);

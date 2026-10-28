@@ -2,6 +2,8 @@
 
 ## 0.2.0 — unreleased
 
+- Remove an app-specific Debug harness and the executable launch path; other
+  apps attach to their own Debug test entrypoint.
 - Replace the 32-cell presentation strip with an 8×4 pink/aqua dot matrix.
   Decoders sample a 3×3 neighbourhood per cell and calibrate both colours from
   the header, tolerating uniform shifts while rejecting other palettes.
@@ -51,8 +53,7 @@
   source hot reload/restart, explicit target identity and owned-session recovery.
 - Per-channel capture evidence, integer Windows native frame rates, independent
   Android keyboard checks, and strict lease/attach ownership validation.
-- Logical-display panel selection for Fold capture and an isolated BooruFlow
-  Android Debug integration with live source reload.
+- Logical-display panel selection for foldable Android capture.
 - Foreground/focus observations remain separate from capture acceptance;
   background-only checks require an established background interval.
 - Linux/Windows headless CI, compiled MCP startup without SDK environment hints,

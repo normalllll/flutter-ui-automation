@@ -62,7 +62,7 @@ final toolDefinitions = <Json>[
   ),
   definition(
     'automation_session',
-    'Persistent Flutter sessions. Start only a verified nonactivating fixture or isolated BooruFlow test runner. Android needs explicit USB device. Attach never owns the app. Hot reload/restart keeps the native app process.',
+    'Persistent Flutter sessions. Start only the verified nonactivating fixture; attach to other apps. Android needs explicit USB device. Attach never owns the app. Hot reload/restart keeps the native app process.',
     {
       'action': string([
         'start',
@@ -80,9 +80,8 @@ final toolDefinitions = <Json>[
       'entrypoint': string(),
       'deviceId': string(),
       'package': string(),
-      'hooks': string(['fixture', 'booruflow']),
+      'hooks': string(['fixture']),
       'vmUri': string(),
-      'executable': string(),
       'placement': string(['auto', 'primary', 'secondary']),
       'renderer': string(['default', 'skia', 'software']),
       'job': boolean(),

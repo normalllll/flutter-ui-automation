@@ -1,6 +1,6 @@
 # Validation status
 
-Updated 2026-10-27, Asia/Taipei. This page separates current local checks,
+Updated 2026-10-28, Asia/Taipei. This page separates current local checks,
 recorded runtime acceptance and remaining limits. Raw images, recordings,
 service tokens and device identifiers remain in ignored local artifacts.
 
@@ -8,13 +8,14 @@ service tokens and device identifiers remain in ignored local artifacts.
 
 | Check | Result | Scope |
 | --- | --- | --- |
-| Resident Dart MCP | 86 cases: Windows 73 passed / 13 platform skips; Linux and macOS each 75 passed / 11 platform skips | Protocol, cancellation, evidence isolation, readiness, session/lease/process identity, simulator binding before Driver mutation, retryable cleanup, failed-launch rollback, bounded process/pipe cleanup, raw simulator rotation and real FFmpeg fidelity/timing |
+| Resident Dart MCP | 105 cases: Windows 91 passed / 14 platform skips; Linux and macOS not yet rerun after the 2026-10-28 changes | Protocol, cancellation, evidence isolation, readiness, session/lease/process identity, simulator binding before Driver mutation, retryable cleanup, failed-launch rollback, bounded process/pipe cleanup, raw simulator rotation and real FFmpeg fidelity/timing |
 | Compiled distribution | Passed without inherited `DART_ROOT` / `DART_SDK` | MCP initialization, merged tools, native-fps validation, compiled CLI reuse, EOF cleanup |
 | Broker lifetime | Passed | Authentication, shared service PID, duplicate rejection, shutdown and recovery after a forced service-only crash |
 | Independent Python capture | 11 tests passed on Windows | HWND/PID scope, diagnostic retention, atomic publication and helper cleanup; no Flutter/Android runtime remains |
 | Flutter fixture | Analysis clean; 10 headless tests passed | Binding restoration, focus guard, layout, dialogs and widget behavior |
+| Device regressions | Windows and Android full, cold and quick suites passed on 2026-10-28 | Fixture navigation, capture/recording, 8×4 presentation probe, cold fences, hot reload/restart, cancellation, CLI reuse |
 | Repository | Source/metadata/document links and `git diff --check` passed | Excludes ignored build, media, session and lock files from published source |
-| CI configuration | Actionlint passed; Linux/Windows/macOS matrix, native/Apple builds and isolated Linux runtime checks configured | Remote execution of the uncommitted platform changes is pending |
+| CI configuration | Actionlint passed; Linux/Windows/macOS matrix, native/Apple builds and isolated Linux runtime checks configured | Remote execution of the latest changes is pending until they are pushed |
 
 Local runtime measurements used Flutter 3.47.8 / Dart 3.13.7. Minimum supported
 toolchains are Flutter 3.44.0 / Dart 3.12.0, based on the embedded server's Dart
@@ -40,9 +41,10 @@ has a five-minute step limit and noninteractive Linux installation with bounded
 network retries/timeouts and lock waits. Remote results must be checked for the
 current commit; the failed run does not establish acceptance of these corrections.
 
-The subsequent [run for commit 801eaf2](https://github.com/normalllll/flutter-ui-automation/actions/runs/40383644877)
-passed all five jobs. It predates the current uncommitted Linux/Apple expansion.
-No new commit or push was made for the platform implementation. Detailed current
+The subsequent [run](https://github.com/normalllll/flutter-ui-automation/actions/runs/40383644877)
+for the commit that retired the Python runtime passed all five jobs. It predates
+the Linux/Apple expansion and the 2026-10-28 changes, which have not run on
+GitHub yet. Detailed current
 host/runtime scope is in [Linux and Apple validation](unix-validation.md).
 
 ## Linux and Apple runtime expansion
@@ -76,7 +78,7 @@ replies, failed mode restoration and cancellation during final report persistenc
 Live sessions are published only after metadata is durable; cleanup responsibility
 is persisted before enabling a temporary mode and retained until disabling is
 acknowledged. Ordinary and cold verification share cancellation-aware final-report
-publication. All 69 Dart tests passed locally after these changes.
+publication.
 
 CLI-routing compatibility tests for the deleted Python runtime were retired with
 that interface. Headless migrations exercise the resident implementation; they
@@ -84,16 +86,15 @@ do not claim new GUI/device acceptance.
 
 ## Recorded resident-runtime acceptance
 
-Windows and a physical USB Galaxy Fold were exercised on 2026-10-26–27 with the
+Windows and a physical USB Android foldable were exercised on 2026-10-26–28 with the
 resident MCP. The retained evidence covers navigation, callbacks, Unicode,
 Android native IME/insets, lifecycle/rotation, app/native PNG comparison, exact
 presentation tokens, lossless app/Windows masters, source hot reload, restart,
 cancellation, service recovery and per-channel failure isolation.
 
-BooruFlow was exercised through its dedicated Windows Debug harness and isolated
-Android Debug package. Its production app/data remained separate; source hot
-reload through the staging junction and restart preserved the native PID.
-The tests did not submit searches or repeatedly refresh network content.
+The workflow was also exercised against a separate real application through its
+own Debug test entrypoints, with its production app and data kept separate; those
+app-specific harnesses are not part of this repository.
 
 Windows cold-start PNG pairs and presentation fences passed, followed by a
 separately accepted launch/stop correction. That earlier run is not relabeled as

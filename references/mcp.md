@@ -223,29 +223,11 @@ Required hooks are `state`, `refresh`/`settle`, `appScreenshot`, and
 also needs its real native Flutter-view bounds and instance-token file. Preserve
 real Android lifecycle/focus; make text emulation explicit and reversible.
 
-The included `booruflow` hook profile handles the existing Windows Debug harness.
-For its verified isolated executable, pass `project`, `executable`, and
-`hooks: booruflow`; its default entrypoint is `tool/automation/main.dart`.
-Other projects attach to an already authorized test process. Missing hooks are
-reported rather than replaced by desktop or device-wide input.
-
-### BooruFlow on Android
-
-The [isolated Android builder](../tools/automation/integrations/booruflow_android/build_android_mcp.ps1)
-adds a separate Debug Driver entrypoint and a real native identity/geometry
-bridge **only to a staging copy**. Its package is
-`io.github.normalllll.booruflow.automation`; the original app and production
-Android entrypoint stay separate. Existing HTTP/AOT harnesses remain usable.
-
-```powershell
-./tools/automation/integrations/booruflow_android/build_android_mcp.ps1 -Project C:/path/to/BooruFlow -Stage C:/path/to/flutter-ui-automation/artifacts/booru-android -FlutterRoot C:/path/to/flutter
-```
-
-Start that prepared project with `automation_session`:
-
-```json
-{"action":"start","platform":"android","hooks":"booruflow","project":"C:/path/to/flutter-ui-automation/artifacts/booru-android","deviceId":"ACTUAL_SERIAL","sessionId":"booru-android"}
-```
+`automation_session/start` launches only the verified fixture. Other projects
+build and launch their own Debug test entrypoint, then `attach` with its `vmUri`
+(and, on Android, the explicit `deviceId` and `package`). Attach never owns or
+stops that app. Missing hooks are reported rather than replaced by desktop or
+device-wide input.
 
 The default Android entrypoint is `tool/automation/android_mcp.dart`. The service
 checks its marker and isolated application ID before launch, then validates the

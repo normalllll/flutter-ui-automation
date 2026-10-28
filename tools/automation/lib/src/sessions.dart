@@ -415,7 +415,6 @@ class Sessions {
           // start must not silently adopt an attached session, nor attach
           // reuse an owned one; ownership decides who stops the app.
           attach == existing.owned ||
-          (args['executable'] != null && existing.executableProcess == null) ||
           (args['entrypoint'] != null &&
               !p.equals(
                 p.normalize(p.join(existing.project, args.text('entrypoint'))),
@@ -457,22 +456,13 @@ class Sessions {
     final protocol = HookProtocol.values.byName(
       args.text('hooks', fallback: 'fixture'),
     );
-    final entrypoint = args.text(
-      'entrypoint',
-      fallback: protocol == HookProtocol.booruflow
-          ? platform == TargetPlatform.android
-                ? 'tool/automation/android_mcp.dart'
-                : 'tool/automation/main.dart'
-          : platform.entrypoint,
-    );
+    final entrypoint = args.text('entrypoint', fallback: platform.entrypoint);
     final serial = platform.isMobile ? args.text('deviceId') : null;
     final package = platform.isMobile
         ? args.text(
             'package',
             fallback: platform == TargetPlatform.ios
                 ? 'dev.flutter.flutterCaptureLab'
-                : protocol == HookProtocol.booruflow
-                ? 'io.github.normalllll.booruflow.automation'
                 : 'dev.flutter.flutter_capture_lab',
           )
         : null;
@@ -633,126 +623,12 @@ class Sessions {
           cancellation,
         );
         uri = resident.vmUri!;
-      } else if (args['executable'] case final String executable) {
-        if (platform != TargetPlatform.windows ||
-            protocol != HookProtocol.booruflow) {
-          throw const AutomationError(
-            'unsafe_launch',
-            'Executable launch currently requires the verified BooruFlow test runner',
-          );
-        }
-        final file = File(executable).absolute;
-        final kernel = File(
-          p.join(file.parent.path, 'data', 'flutter_assets', 'kernel_blob.bin'),
-        );
-        if (!await kernel.exists() ||
-            !utf8
-                .decode(await kernel.readAsBytes(), allowMalformed: true)
-                .contains(
-                  'Set an explicit absolute BOORUFLOW_AUTOMATION_PROFILE',
-                )) {
-          throw const AutomationError(
-            'unsafe_launch',
-            'Executable is not an isolated Debug automation bundle',
-          );
-        }
-        final profile = Directory(
-          p.join(
-            directory.path,
-            'profile-${DateTime.now().microsecondsSinceEpoch}',
-          ),
-        );
-        await profile.create();
-        final env = {
-          'BOORUFLOW_AUTOMATION_PROFILE': profile.path,
-          'FLUTTER_ENGINE_SWITCHES': '4',
-          'FLUTTER_ENGINE_SWITCH_1': 'enable-dart-profiling=true',
-          'FLUTTER_ENGINE_SWITCH_2': 'enable-checked-mode=true',
-          'FLUTTER_ENGINE_SWITCH_3': 'verify-entry-points=true',
-          'FLUTTER_ENGINE_SWITCH_4': 'vm-service-port=0',
-        };
-        executableProcess = await host.start(
-          file.path,
-          [],
-          directory: file.parent.path,
-          extraEnvironment: env,
-        );
-        final log = File(p.join(directory.path, 'app.log')).openWrite();
-        final vm = Completer<String>();
-        void line(String value) {
-          log.writeln(value);
-          final match = RegExp(
-            r'The Dart VM service is listening on (http://\S+)',
-          ).firstMatch(value);
-          if (match != null && !vm.isCompleted) vm.complete(match[1]!);
-        }
-
-        final out = executableProcess.stdout
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .forEach(line);
-        final errors = executableProcess.stderr
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .forEach(line);
-        unawaited(
-          executableProcess.exitCode.then((code) async {
-            // Drain buffered output before closing; a late write to a closed
-            // sink would be an uncaught error that ends the whole service.
-            await Future.wait([out, errors]);
-            await log.close();
-            if (!vm.isCompleted) {
-              vm.completeError(
-                AutomationError('launch_failed', 'App exited $code'),
-              );
-            }
-          }),
-        );
-        uri = await cancellation.wait(
-          vm.future.timeout(const Duration(seconds: 50)),
-        );
-        resident = await _flutter(
-          [
-            'attach',
-            '--machine',
-            '--debug-uri',
-            uri,
-            '-d',
-            'windows',
-            '-t',
-            entrypoint,
-          ],
-          project,
-          directory,
-          {},
-          cancellation,
-        );
-        uri = resident.vmUri!;
       } else {
         if (!fixture) {
-          final entry = File(p.join(project, entrypoint));
-          final gradle = File(
-            p.join(project, 'android', 'app', 'build.gradle.kts'),
+          throw const AutomationError(
+            'unsafe_launch',
+            'Start the verified fixture, or attach to another project',
           );
-          final isolatedAndroid =
-              platform == TargetPlatform.android &&
-              protocol == HookProtocol.booruflow &&
-              package == 'io.github.normalllll.booruflow.automation' &&
-              entrypoint == 'tool/automation/android_mcp.dart' &&
-              await entry.exists() &&
-              (await entry.readAsString()).contains(
-                'BOORUFLOW_ANDROID_MCP_TEST_ONLY',
-              ) &&
-              await gradle.exists() &&
-              RegExp(
-                r'applicationId\s*=\s*"io\.github\.normalllll\.booruflow\.automation"',
-              ).hasMatch(await gradle.readAsString());
-          if (!isolatedAndroid) {
-            throw const AutomationError(
-              'unsafe_launch',
-              'Use the verified fixture, an isolated BooruFlow test project, or attach to another project',
-            );
-          }
         }
         final env = <String, String>{
           if (platform.isUnixTarget) 'CAPTURE_LAB_AUTOMATION': '1',

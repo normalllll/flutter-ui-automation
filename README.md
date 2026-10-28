@@ -147,8 +147,8 @@ blank/stale frame rejection, timing and display-state evidence, and
 
 Keep test hooks in a separate Debug entrypoint and preserve the app's production
 entrypoint. The [MCP integration guide](references/mcp.md#integrating-an-app)
-describes the required hooks, existing BooruFlow Windows harness and isolated
-Android staging integration. Native runner/plugin changes still require rebuilds.
+describes the required hooks and how to attach to your own test process.
+Native runner/plugin changes still require rebuilds.
 Native IME composition, OS dialogs and system hotkeys require separate checks.
 
 ## Agent installation
